@@ -123,3 +123,37 @@ body.is-resizing-session * {
 @media (max-width: 760px) {
   .session-resizer { display: none; }
 }
+
+.activity-card { border: 1px solid var(--line); background: #0f1317; padding: 26px 28px; margin-bottom: 55px; }
+.activity-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
+.activity-card__header h2 { font-size: 22px; margin: 7px 0 0; }
+.activity-card__header .eyebrow svg { margin-right: 7px; color: var(--green); }
+.activity-card__header .ant-select { min-width: 180px; }
+.activity-calendar-scroll { overflow-x: auto; padding: 4px 0 8px; }
+.activity-calendar { display: grid; grid-template-rows: repeat(7, 12px); grid-auto-flow: column; grid-auto-columns: 12px; gap: 4px; min-width: max-content; }
+.activity-day { width: 12px; height: 12px; padding: 0; border: 1px solid #222a31; border-radius: 2px; background: #161c21; cursor: pointer; }
+.activity-day.level-1, .activity-legend .level-1 { background: #173c2b; border-color: #205238; }
+.activity-day.level-2, .activity-legend .level-2 { background: #24613b; border-color: #347a4c; }
+.activity-day.level-3, .activity-legend .level-3 { background: #42a653; border-color: #55bd64; }
+.activity-day.level-4, .activity-legend .level-4 { background: var(--green); border-color: #b6ff8f; }
+.activity-day.is-outside { visibility: hidden; }
+.activity-day.is-selected { outline: 2px solid var(--amber); outline-offset: 2px; }
+.activity-day:hover { border-color: #dce6dc; transform: scale(1.12); }
+.activity-legend { display: flex; justify-content: flex-end; align-items: center; gap: 5px; margin-top: 10px; color: #68737e; font: 9px "JetBrains Mono"; }
+.activity-legend i { width: 11px; height: 11px; border: 1px solid #222a31; border-radius: 2px; background: #161c21; }
+.activity-detail { display: grid; grid-template-columns: 190px 1fr; gap: 24px; border-top: 1px solid var(--line); margin-top: 20px; padding-top: 20px; }
+.activity-detail > div { display: flex; flex-direction: column; gap: 6px; }
+.activity-detail b { font-size: 13px; }
+.activity-detail > div span { font: 10px "JetBrains Mono"; color: var(--green); }
+.activity-detail ul { list-style: none; margin: 0; padding: 0; }
+.activity-detail li { display: flex; justify-content: space-between; gap: 20px; border-bottom: 1px dotted #2a3239; padding: 7px 0; font-size: 11px; }
+.activity-detail li span { font: 9px "JetBrains Mono"; color: #7f8a94; }
+.activity-detail .ant-empty { margin: 0; }
+.activity-detail .ant-empty-image { display: none; }
+
+@media (max-width: 760px) {
+  .activity-card { padding: 20px 16px; }
+  .activity-card__header { flex-direction: column; }
+  .activity-card__header .ant-select { width: 100%; }
+  .activity-detail { grid-template-columns: 1fr; }
+}
