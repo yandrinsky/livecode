@@ -14,7 +14,7 @@ export function Pomodoro({ workspaceId, initial, compact = false }: { workspaceI
     socket.emit("workspace:join", workspaceId, (data: { pomodoro?: PomodoroType }) => data.pomodoro && setTimer(data.pomodoro));
     socket.on("pomodoro:update", update);
     const tick = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => { socket.off("pomodoro:update", update); window.clearInterval(tick); };
+    return () => { socket.emit("workspace:leave", workspaceId); socket.off("pomodoro:update", update); window.clearInterval(tick); };
   }, [socket, workspaceId]);
 
   const remaining = timer?.status === "RUNNING" && timer.endsAt

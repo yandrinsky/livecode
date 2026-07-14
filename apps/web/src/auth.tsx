@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "./api";
+import { disconnectLiveSocket } from "./socket";
 import type { User } from "./types";
 
 type AuthContextValue = { user: User | null; ready: boolean; authenticate: (token: string, user: User) => void; logout: () => void };
@@ -14,8 +15,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
   const value = useMemo(() => ({
     user, ready,
-    authenticate(token: string, nextUser: User) { localStorage.setItem("pairboard_token", token); setUser(nextUser); },
-    logout() { localStorage.removeItem("pairboard_token"); setUser(null); },
+    authenticate(token: string, nextUser: User) { disconnectLiveSocket(); localStorage.setItem("pairboard_token", token); setUser(nextUser); },
+    logout() { disconnectLiveSocket(); localStorage.removeItem("pairboard_token"); setUser(null); },
   }), [user, ready]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

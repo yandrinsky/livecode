@@ -7,3 +7,8 @@ export function liveSocket() {
   if (!socket.connected) { socket.auth = { token: localStorage.getItem("pairboard_token") }; socket.connect(); }
   return socket;
 }
+
+export function disconnectLiveSocket() {
+  socket?.disconnect();
+  socket = null;
+}

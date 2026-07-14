@@ -7,13 +7,15 @@
     "dev": "concurrently -n api,web -c cyan,green \"npm run dev -w @pairboard/api\" \"npm run dev -w @pairboard/web\"",
     "build": "npm run build -w @pairboard/api && npm run build -w @pairboard/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "db:generate": "npm run db:generate -w @pairboard/api",
-    "db:migrate": "npm run db:migrate -w @pairboard/api",
-    "db:push": "npm run db:push -w @pairboard/api",
-    "db:seed": "npm run db:seed -w @pairboard/api"
+    "verify:scenarios": "node scripts/verify-scenarios.mjs",
+    "db:generate": "dotenv -e .env -- prisma generate --schema apps/api/prisma/schema.prisma",
+    "db:migrate": "dotenv -e .env -- prisma migrate dev --schema apps/api/prisma/schema.prisma",
+    "db:push": "dotenv -e .env -- prisma db push --schema apps/api/prisma/schema.prisma",
+    "db:seed": "dotenv -e .env -- tsx apps/api/prisma/seed.ts"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "dotenv-cli": "^8.0.0"
   },
   "engines": { "node": ">=20" }
 }

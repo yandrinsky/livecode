@@ -1,13 +1,34 @@
 import { ArrowLeftOutlined, CheckCircleFilled, CloseOutlined, CodeOutlined, PlayCircleFilled, SaveOutlined, TeamOutlined } from "@ant-design/icons";
-import Editor from "@monaco-editor/react";
-import { Avatar, Button, Skeleton, Tag, Tooltip, message } from "antd";
-import { useEffect, useMemo, useRef, useState } from "react";
+import Editor, { type OnMount } from "@monaco-editor/react";
+import { Avatar, Button, Skeleton, Tag, Tooltip } from "antd";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import ts from "typescript";
 import { api } from "../api";
 import { Pomodoro } from "../components/Pomodoro";
 import { liveSocket } from "../socket";
 import type { Board, User } from "../types";
+
+type EditorInstance = Parameters<OnMount>[0];
+type MonacoInstance = Parameters<OnMount>[1];
+type DecorationCollection = ReturnType<EditorInstance["createDecorationsCollection"]>;
+type BoardSelection = { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
+type RemoteSelection = { boardId: string; clientId: string; user: User; selection: BoardSelection };
+
+const DEFAULT_SESSION_WIDTH = 305;
+const MIN_SESSION_WIDTH = 260;
+const MAX_SESSION_WIDTH = 720;
+const SESSION_WIDTH_KEY = "pairboard_session_width";
+
+function storedSessionWidth() {
+  if (typeof window === "undefined") return DEFAULT_SESSION_WIDTH;
+  const value = Number(localStorage.getItem(SESSION_WIDTH_KEY));
+  return Number.isFinite(value) ? Math.min(MAX_SESSION_WIDTH, Math.max(MIN_SESSION_WIDTH, value)) : DEFAULT_SESSION_WIDTH;
+}
+
+function colorIndex(id: string) {
+  return [...id].reduce((hash, char) => ((hash * 31) + char.charCodeAt(0)) | 0, 0) >>> 0;
+}
 
 export function BoardPage() {
   const { workspaceId = "", boardId = "" } = useParams();
@@ -18,8 +39,16 @@ export function BoardPage() {
   const [presence, setPresence] = useState<User[]>([]);
   const [output, setOutput] = useState<string[]>(["Готово к запуску. Добавьте console.log, чтобы увидеть результат."]);
   const [running, setRunning] = useState(false);
+  const [sessionWidth, setSessionWidth] = useState(storedSessionWidth);
+  const [resizingSession, setResizingSession] = useState(false);
   const remote = useRef(false);
   const saveTimer = useRef<number | undefined>(undefined);
+  const selectionTimer = useRef<number | undefined>(undefined);
+  const editorRef = useRef<EditorInstance | null>(null);
+  const monacoRef = useRef<MonacoInstance | null>(null);
+  const selectionDisposable = useRef<{ dispose: () => void } | null>(null);
+  const remoteDecorations = useRef(new Map<string, DecorationCollection>());
+  const resizeState = useRef<{ startX: number; startWidth: number; width: number } | null>(null);
 
   useEffect(() => {
     api<{ board: Board }>(`/boards/${boardId}`).then(({ board: value }) => { setBoard(value); setCode(value.content); });
@@ -31,17 +60,139 @@ export function BoardPage() {
       remote.current = true; setCode(data.content); setSaved(true); setBoard((b) => b ? { ...b, version: data.version } : b);
     };
     const onSaved = (data: { version: number }) => { setSaved(true); setBoard((b) => b ? { ...b, version: data.version } : b); };
-    socket.emit("workspace:join", workspaceId);
+    const onSelection = (data: RemoteSelection) => {
+      if (data.boardId !== boardId || data.clientId === socket.id) return;
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      const model = editor?.getModel();
+      if (!editor || !monaco || !model) return;
+      const startLine = Math.min(model.getLineCount(), Math.max(1, data.selection.startLineNumber));
+      const endLine = Math.min(model.getLineCount(), Math.max(1, data.selection.endLineNumber));
+      const startColumn = Math.min(model.getLineMaxColumn(startLine), Math.max(1, data.selection.startColumn));
+      const endColumn = Math.min(model.getLineMaxColumn(endLine), Math.max(1, data.selection.endColumn));
+      const range = new monaco.Range(startLine, startColumn, endLine, endColumn);
+      const cursorRange = new monaco.Range(endLine, endColumn, endLine, endColumn);
+      const palette = colorIndex(data.user.id) % 6;
+      let collection = remoteDecorations.current.get(data.clientId);
+      if (!collection) {
+        collection = editor.createDecorationsCollection();
+        remoteDecorations.current.set(data.clientId, collection);
+      }
+      const isCollapsed = range.isEmpty();
+      collection.set([
+        ...(!isCollapsed ? [{
+          range,
+          options: {
+            inlineClassName: `remote-selection remote-selection--${palette}`,
+            hoverMessage: { value: `**${data.user.displayName}** выделил этот фрагмент` },
+            stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          },
+        }] : []),
+        {
+          range: cursorRange,
+          options: {
+            afterContentClassName: `remote-cursor remote-cursor--${palette}`,
+            hoverMessage: { value: `**${data.user.displayName}**` },
+            stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          },
+        },
+      ]);
+    };
+    const clearSelection = (data: { boardId: string; clientId: string }) => {
+      if (data.boardId !== boardId) return;
+      remoteDecorations.current.get(data.clientId)?.clear();
+      remoteDecorations.current.delete(data.clientId);
+    };
     socket.emit("board:join", boardId);
-    socket.on("board:change", onChange); socket.on("board:saved", onSaved); socket.on("presence:update", setPresence);
-    return () => { socket.off("board:change", onChange); socket.off("board:saved", onSaved); socket.off("presence:update", setPresence); };
+    socket.on("board:change", onChange); socket.on("board:saved", onSaved); socket.on("board:selection", onSelection); socket.on("board:selection-clear", clearSelection); socket.on("presence:update", setPresence);
+    return () => {
+      socket.emit("board:leave", boardId);
+      socket.off("board:change", onChange); socket.off("board:saved", onSaved); socket.off("board:selection", onSelection); socket.off("board:selection-clear", clearSelection); socket.off("presence:update", setPresence);
+      selectionDisposable.current?.dispose(); selectionDisposable.current = null;
+      window.clearTimeout(selectionTimer.current);
+      for (const collection of remoteDecorations.current.values()) collection.clear();
+      remoteDecorations.current.clear();
+    };
   }, [socket, workspaceId, boardId]);
+
+  useEffect(() => {
+    const ignoreBrowserSave = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    window.addEventListener("keydown", ignoreBrowserSave, true);
+    return () => window.removeEventListener("keydown", ignoreBrowserSave, true);
+  }, []);
+
+  useEffect(() => {
+    const clampOnResize = () => {
+      const next = Math.min(sessionWidth, Math.max(MIN_SESSION_WIDTH, window.innerWidth - 420));
+      if (next !== sessionWidth) { setSessionWidth(next); localStorage.setItem(SESSION_WIDTH_KEY, String(next)); }
+    };
+    window.addEventListener("resize", clampOnResize);
+    return () => window.removeEventListener("resize", clampOnResize);
+  }, [sessionWidth]);
 
   const updateCode = (value = "") => {
     setCode(value);
     if (remote.current) { remote.current = false; return; }
     setSaved(false); window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => socket.emit("board:change", { boardId, content: value }), 500);
+  };
+
+  const mountEditor: OnMount = (editor, monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
+    monaco.editor.setTheme("pairboard-dark");
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => undefined);
+    selectionDisposable.current?.dispose();
+    selectionDisposable.current = editor.onDidChangeCursorSelection(({ selection }) => {
+      window.clearTimeout(selectionTimer.current);
+      selectionTimer.current = window.setTimeout(() => {
+        socket.emit("board:selection", {
+          boardId,
+          selection: {
+            startLineNumber: selection.startLineNumber,
+            startColumn: selection.startColumn,
+            endLineNumber: selection.endLineNumber,
+            endColumn: selection.endColumn,
+          },
+        });
+      }, 50);
+    });
+  };
+
+  const clampWidth = (value: number) => Math.min(MAX_SESSION_WIDTH, Math.max(MIN_SESSION_WIDTH, Math.min(value, window.innerWidth - 420)));
+  const setAndStoreSessionWidth = (value: number) => {
+    const next = clampWidth(value);
+    resizeState.current && (resizeState.current.width = next);
+    setSessionWidth(next);
+    localStorage.setItem(SESSION_WIDTH_KEY, String(next));
+  };
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resizeState.current = { startX: event.clientX, startWidth: sessionWidth, width: sessionWidth };
+    setResizingSession(true);
+    document.body.classList.add("is-resizing-session");
+  };
+  const moveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!resizeState.current) return;
+    setAndStoreSessionWidth(resizeState.current.startWidth + resizeState.current.startX - event.clientX);
+  };
+  const stopResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!resizeState.current) return;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    localStorage.setItem(SESSION_WIDTH_KEY, String(resizeState.current.width));
+    resizeState.current = null;
+    setResizingSession(false);
+    document.body.classList.remove("is-resizing-session");
+  };
+  const resizeWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    setAndStoreSessionWidth(sessionWidth + (event.key === "ArrowLeft" ? 24 : -24));
   };
 
   const run = () => {
@@ -70,7 +221,7 @@ export function BoardPage() {
       <Button className="run-button" type="primary" icon={<PlayCircleFilled />} loading={running} onClick={run}>Запустить</Button>
     </header>
     <section className="board-context"><CodeOutlined /><div><span>УСЛОВИЕ</span><p>{board.description || "Условие не добавлено. Обсудите задачу прямо во время сессии."}</p></div><button><CloseOutlined /></button></section>
-    <main className="editor-layout">
+    <main className="editor-layout" style={{ "--session-pane-width": `${sessionWidth}px` } as CSSProperties}>
       <div className="editor-pane">
         <div className="editor-tab"><span>{board.title.toLowerCase().replaceAll(" ", "-")}.{board.language === "TYPESCRIPT" ? "ts" : "js"}</span><small><TeamOutlined /> LIVE</small></div>
         <Editor
@@ -80,11 +231,27 @@ export function BoardPage() {
           theme="vs-dark"
           onChange={updateCode}
           beforeMount={(monaco) => monaco.editor.defineTheme("pairboard-dark", { base: "vs-dark", inherit: true, rules: [], colors: { "editor.background": "#0b0e12", "editor.lineHighlightBackground": "#11161c", "editorCursor.foreground": "#9bff65", "editor.selectionBackground": "#2d4a3f88", "editorLineNumber.foreground": "#3d4652", "editorLineNumber.activeForeground": "#8d99a8" } })}
-          onMount={(_, monaco) => monaco.editor.setTheme("pairboard-dark")}
+          onMount={mountEditor}
           options={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 15, lineHeight: 24, minimap: { enabled: false }, padding: { top: 18 }, smoothScrolling: true, cursorSmoothCaretAnimation: "on", formatOnPaste: true, tabSize: 2, wordWrap: "on" }}
         />
       </div>
-      <aside className="session-pane">
+      <aside className={`session-pane ${resizingSession ? "session-pane--resizing" : ""}`}>
+        <div
+          className="session-resizer"
+          role="separator"
+          aria-label="Изменить ширину консоли"
+          aria-orientation="vertical"
+          aria-valuemin={MIN_SESSION_WIDTH}
+          aria-valuemax={MAX_SESSION_WIDTH}
+          aria-valuenow={Math.round(sessionWidth)}
+          tabIndex={0}
+          onPointerDown={startResize}
+          onPointerMove={moveResize}
+          onPointerUp={stopResize}
+          onPointerCancel={stopResize}
+          onDoubleClick={() => setAndStoreSessionWidth(DEFAULT_SESSION_WIDTH)}
+          onKeyDown={resizeWithKeyboard}
+        ><span /></div>
         <Pomodoro workspaceId={workspaceId} compact />
         <div className="console"><header><span>КОНСОЛЬ</span><button onClick={() => setOutput([])}>очистить</button></header><pre>{output.map((line, i) => <span key={i}>{line}</span>)}</pre></div>
         <div className="session-tip"><span>ПОДСКАЗКА НАСТАВНИКУ</span><p>Дайте ученику проговорить идею до первой строки кода.</p></div>

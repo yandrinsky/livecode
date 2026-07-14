@@ -65,7 +65,7 @@ cp .env.example .env
 npm install
 docker compose up -d postgres
 npm run db:generate
-npm run db:push
+npm run db:migrate -- --name init
 npm run db:seed
 npm run dev
 ```
@@ -86,6 +86,7 @@ npm run dev
 npm run dev
 npm run typecheck
 npm run build
+npm run verify:scenarios
 npm run db:generate
 npm run db:push
 npm run db:migrate
@@ -162,7 +163,11 @@ DATABASE_URL='postgresql://pairboard:pairboard@localhost:5432/pairboard?schema=p
 Текущие события Socket.IO:
 
 - `workspace:join`
+- `workspace:leave`
 - `board:join`
+- `board:leave`
+- `board:selection`
+- `board:selection-clear`
 - `board:change`
 - `board:saved`
 - `presence:update`
@@ -261,6 +266,14 @@ DATABASE_URL='postgresql://pairboard:pairboard@localhost:5432/pairboard?schema=p
 4. Перезагрузите страницу и убедитесь, что последнее сохранённое содержимое восстановилось.
 5. Запустите, поставьте на паузу и сбросьте Pomodoro с разных клиентов.
 
+При запущенных API и PostgreSQL основной набор REST/realtime-сценариев автоматизирован:
+
+```bash
+npm run verify:scenarios
+```
+
+Скрипт создаёт отдельные тестовые аккаунты и workspace с уникальными именами. Он не очищает эти данные автоматически, чтобы после сбоя состояние можно было исследовать в PostgreSQL.
+
 Для frontend:
 
 1. Проверьте login/register.
@@ -292,4 +305,3 @@ DATABASE_URL='postgresql://pairboard:pairboard@localhost:5432/pairboard?schema=p
 - production build собирается;
 - документация соответствует командам и фактическому поведению;
 - известные ограничения названы явно, а не скрыты.
-

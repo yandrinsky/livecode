@@ -34,7 +34,7 @@ cp .env.example .env
 npm install
 docker compose up -d postgres
 npm run db:generate
-npm run db:push
+npm run db:migrate -- --name init
 npm run db:seed
 npm run dev
 ```
@@ -54,7 +54,9 @@ npm run dev
 npm run dev         # web и api одновременно
 npm run build       # production-сборка обоих приложений
 npm run typecheck   # строгая проверка TypeScript
-npm run db:push     # применить Prisma-схему локально
+npm run verify:scenarios # REST + Socket.IO пользовательские сценарии (нужны запущенные API и БД)
+npm run db:migrate  # применить/создать Prisma-миграции локально
+npm run db:push     # быстро синхронизировать схему без миграции (только прототипирование)
 npm run db:seed     # добавить демо-данные
 ```
 

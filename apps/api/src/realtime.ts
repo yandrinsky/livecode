@@ -6,6 +6,12 @@ import { config } from "./config.js";
 import { db } from "./db.js";
 
 type PomodoroAction = { workspaceId: string; action: "start" | "pause" | "reset"; durationSeconds?: number };
+type BoardSelection = {
+  startLineNumber: number;
+  startColumn: number;
+  endLineNumber: number;
+  endColumn: number;
+};
 
 export function attachRealtime(server: HttpServer) {
   const io = new Server(server, { cors: { origin: config.webOrigin, credentials: true } });
@@ -28,12 +34,31 @@ export function attachRealtime(server: HttpServer) {
       io.to(`workspace:${workspaceId}`).emit("presence:update", roomUsers(io, `workspace:${workspaceId}`));
     });
 
+    socket.on("workspace:leave", async (workspaceId: string) => {
+      const room = `workspace:${workspaceId}`;
+      await socket.leave(room);
+      io.to(room).emit("presence:update", roomUsers(io, room));
+    });
+
     socket.on("board:join", async (boardId: string, ack?: (data: unknown) => void) => {
       const board = await boardAccess(boardId, user.id);
       if (!board) return ack?.({ error: "forbidden" });
       await socket.join(`board:${boardId}`);
       ack?.({ board });
       io.to(`board:${boardId}`).emit("presence:update", roomUsers(io, `board:${boardId}`));
+    });
+
+    socket.on("board:leave", async (boardId: string) => {
+      const room = `board:${boardId}`;
+      socket.to(room).emit("board:selection-clear", { boardId, clientId: socket.id, userId: user.id });
+      await socket.leave(room);
+      io.to(room).emit("presence:update", roomUsers(io, room));
+    });
+
+    socket.on("board:selection", ({ boardId, selection }: { boardId: string; selection: BoardSelection }) => {
+      const room = `board:${boardId}`;
+      if (!socket.rooms.has(room) || !validSelection(selection)) return;
+      socket.to(room).emit("board:selection", { boardId, selection, clientId: socket.id, user });
     });
 
     socket.on("board:change", async ({ boardId, content }: { boardId: string; content: string }) => {
@@ -52,8 +77,9 @@ export function attachRealtime(server: HttpServer) {
       const liveRemaining = current?.status === "RUNNING" && current.endsAt
         ? Math.max(0, Math.ceil((current.endsAt.getTime() - now.getTime()) / 1000))
         : current?.remainingSeconds ?? duration;
+      const startRemaining = durationSeconds === undefined ? (liveRemaining || duration) : duration;
       const data = action === "start"
-        ? { status: "RUNNING" as const, durationSeconds: duration, remainingSeconds: liveRemaining || duration, startedAt: now, endsAt: new Date(now.getTime() + (liveRemaining || duration) * 1000), updatedById: user.id }
+        ? { status: "RUNNING" as const, durationSeconds: duration, remainingSeconds: startRemaining, startedAt: now, endsAt: new Date(now.getTime() + startRemaining * 1000), updatedById: user.id }
         : action === "pause"
           ? { status: "PAUSED" as const, remainingSeconds: liveRemaining, startedAt: null, endsAt: null, updatedById: user.id }
           : { status: "IDLE" as const, durationSeconds: duration, remainingSeconds: duration, startedAt: null, endsAt: null, updatedById: user.id };
@@ -63,11 +89,24 @@ export function attachRealtime(server: HttpServer) {
 
     socket.on("disconnecting", () => {
       for (const room of socket.rooms) {
-        if (room !== socket.id) setTimeout(() => io.to(room).emit("presence:update", roomUsers(io, room)), 0);
+        if (room !== socket.id) {
+          if (room.startsWith("board:")) {
+            socket.to(room).emit("board:selection-clear", { boardId: room.slice(6), clientId: socket.id, userId: user.id });
+          }
+          setTimeout(() => io.to(room).emit("presence:update", roomUsers(io, room)), 0);
+        }
       }
     });
   });
   return io;
+}
+
+function validSelection(value: unknown): value is BoardSelection {
+  if (!value || typeof value !== "object") return false;
+  const selection = value as Record<string, unknown>;
+  return ["startLineNumber", "startColumn", "endLineNumber", "endColumn"].every((key) =>
+    Number.isInteger(selection[key]) && Number(selection[key]) >= 1 && Number(selection[key]) <= 10_000_000
+  );
 }
 
 function roomUsers(io: Server, room: string) {
@@ -79,4 +118,3 @@ function roomUsers(io: Server, room: string) {
   }
   return [...unique.values()];
 }
-

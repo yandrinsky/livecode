@@ -1,2 +1,125 @@
 .auth-story { overflow: hidden; }
 .auth-story h1 { font-size: clamp(44px, 4.4vw, 72px); }
+
+@media (min-width: 761px) {
+  .editor-layout {
+    grid-template-columns: minmax(320px, 1fr) var(--session-pane-width, 305px);
+  }
+
+  .session-pane {
+    position: relative;
+    width: auto;
+    transition: box-shadow 160ms ease;
+  }
+}
+
+.session-pane--resizing {
+  box-shadow: -18px 0 42px rgba(0, 0, 0, 0.35);
+}
+
+.session-resizer {
+  position: absolute;
+  z-index: 8;
+  top: 0;
+  bottom: 0;
+  left: -8px;
+  width: 16px;
+  cursor: col-resize;
+  outline: none;
+  touch-action: none;
+}
+
+.session-resizer::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 7px;
+  width: 1px;
+  background: #252d36;
+  transition: width 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.session-resizer span {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 9px;
+  height: 42px;
+  border: 1px solid #35414b;
+  border-radius: 8px;
+  background: #11161b;
+  opacity: 0;
+  transform: translateY(-50%) scale(0.9);
+  transition: opacity 140ms ease, transform 140ms ease, border-color 140ms ease;
+}
+
+.session-resizer span::after {
+  content: "";
+  position: absolute;
+  inset: 8px 3px;
+  border-left: 1px solid #65717c;
+  border-right: 1px solid #65717c;
+}
+
+.session-resizer:hover::before,
+.session-resizer:focus-visible::before,
+.session-pane--resizing .session-resizer::before {
+  width: 2px;
+  background: #9bff65;
+  box-shadow: 0 0 12px rgba(155, 255, 101, 0.55);
+}
+
+.session-resizer:hover span,
+.session-resizer:focus-visible span,
+.session-pane--resizing .session-resizer span {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+  border-color: #557347;
+}
+
+body.is-resizing-session,
+body.is-resizing-session * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.console pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.monaco-editor .remote-selection {
+  border-radius: 2px;
+  box-shadow: inset 0 -1px rgba(255, 255, 255, 0.16);
+}
+
+.monaco-editor .remote-selection--0 { background: rgba(155, 255, 101, 0.28); }
+.monaco-editor .remote-selection--1 { background: rgba(92, 207, 255, 0.3); }
+.monaco-editor .remote-selection--2 { background: rgba(255, 189, 89, 0.3); }
+.monaco-editor .remote-selection--3 { background: rgba(255, 105, 180, 0.28); }
+.monaco-editor .remote-selection--4 { background: rgba(187, 134, 252, 0.3); }
+.monaco-editor .remote-selection--5 { background: rgba(76, 224, 179, 0.3); }
+
+.monaco-editor .remote-cursor {
+  display: inline-block;
+  height: 1.35em;
+  margin-left: -1px;
+  border-left: 2px solid;
+  vertical-align: text-bottom;
+  animation: remote-cursor-pulse 1.4s ease-in-out infinite;
+}
+
+.monaco-editor .remote-cursor--0 { border-color: #9bff65; }
+.monaco-editor .remote-cursor--1 { border-color: #5ccfff; }
+.monaco-editor .remote-cursor--2 { border-color: #ffbd59; }
+.monaco-editor .remote-cursor--3 { border-color: #ff69b4; }
+.monaco-editor .remote-cursor--4 { border-color: #bb86fc; }
+.monaco-editor .remote-cursor--5 { border-color: #4ce0b3; }
+
+@keyframes remote-cursor-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.42; }
+}
+
+@media (max-width: 760px) {
+  .session-resizer { display: none; }
+}
