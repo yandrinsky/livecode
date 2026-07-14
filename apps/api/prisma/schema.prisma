@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkspaceRole {
+  OWNER
+  MEMBER
+}
+
+enum BoardLanguage {
+  TYPESCRIPT
+  JAVASCRIPT
+}
+
+enum PomodoroStatus {
+  IDLE
+  RUNNING
+  PAUSED
+}
+
+model User {
+  id             String            @id @default(uuid())
+  email          String            @unique
+  passwordHash   String
+  displayName    String
+  ownedWorkspaces Workspace[]       @relation("WorkspaceOwner")
+  memberships    WorkspaceMember[]
+  createdBoards  Board[]           @relation("BoardCreator")
+  createdInvites WorkspaceInvite[] @relation("InviteCreator")
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+}
+
+model Workspace {
+  id        String            @id @default(uuid())
+  name      String
+  ownerId   String
+  owner     User              @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members   WorkspaceMember[]
+  boards    Board[]
+  invites   WorkspaceInvite[]
+  pomodoro  Pomodoro?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}
+
+model WorkspaceMember {
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime      @default(now())
+
+  @@id([workspaceId, userId])
+}
+
+model Board {
+  id          String        @id @default(uuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User          @relation("BoardCreator", fields: [createdById], references: [id])
+  title       String
+  description String        @default("")
+  groupName   String?
+  language    BoardLanguage @default(TYPESCRIPT)
+  content     String        @default("") @db.Text
+  version     Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([workspaceId, updatedAt])
+}
+
+model WorkspaceInvite {
+  id          String    @id @default(uuid())
+  token       String    @unique
+  email       String
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User      @relation("InviteCreator", fields: [createdById], references: [id])
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId])
+}
+
+model Pomodoro {
+  workspaceId     String          @id
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  status          PomodoroStatus  @default(IDLE)
+  durationSeconds Int             @default(1500)
+  remainingSeconds Int            @default(1500)
+  startedAt       DateTime?
+  endsAt          DateTime?
+  updatedById     String?
+  updatedAt       DateTime        @updatedAt
+}

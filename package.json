@@ -1,0 +1,19 @@
+{
+  "name": "pairboard",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,green \"npm run dev -w @pairboard/api\" \"npm run dev -w @pairboard/web\"",
+    "build": "npm run build -w @pairboard/api && npm run build -w @pairboard/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:generate": "npm run db:generate -w @pairboard/api",
+    "db:migrate": "npm run db:migrate -w @pairboard/api",
+    "db:push": "npm run db:push -w @pairboard/api",
+    "db:seed": "npm run db:seed -w @pairboard/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": { "node": ">=20" }
+}
