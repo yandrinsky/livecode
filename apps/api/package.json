@@ -20,6 +20,7 @@
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
+    "prisma": "^6.11.1",
     "socket.io": "^4.8.1",
     "zod": "^3.25.67"
   },
@@ -29,7 +30,6 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.0.10",
     "dotenv-cli": "^8.0.0",
-    "prisma": "^6.11.1",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3"
   }
