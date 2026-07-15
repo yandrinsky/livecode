@@ -24,16 +24,17 @@ enum PomodoroStatus {
 }
 
 model User {
-  id             String            @id @default(uuid())
-  email          String            @unique
-  passwordHash   String
-  displayName    String
-  ownedWorkspaces Workspace[]       @relation("WorkspaceOwner")
-  memberships    WorkspaceMember[]
-  createdBoards  Board[]           @relation("BoardCreator")
-  createdInvites WorkspaceInvite[] @relation("InviteCreator")
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  id              String                @id @default(uuid())
+  email           String                @unique
+  passwordHash    String
+  displayName     String
+  ownedWorkspaces Workspace[]           @relation("WorkspaceOwner")
+  memberships     WorkspaceMember[]
+  createdBoards   Board[]               @relation("BoardCreator")
+  createdInvites  WorkspaceInvite[]     @relation("InviteCreator")
+  activityMinutes BoardActivityMinute[]
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
 }
 
 model Workspace {
@@ -61,21 +62,35 @@ model WorkspaceMember {
 }
 
 model Board {
-  id          String        @id @default(uuid())
-  workspaceId String
-  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  createdById String
-  createdBy   User          @relation("BoardCreator", fields: [createdById], references: [id])
-  title       String
-  description String        @default("")
-  groupName   String?
-  language    BoardLanguage @default(TYPESCRIPT)
-  content     String        @default("") @db.Text
-  version     Int           @default(0)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id              String                @id @default(uuid())
+  workspaceId     String
+  workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdById     String
+  createdBy       User                  @relation("BoardCreator", fields: [createdById], references: [id])
+  title           String
+  description     String                @default("")
+  groupName       String?
+  language        BoardLanguage         @default(TYPESCRIPT)
+  content         String                @default("") @db.Text
+  version         Int                   @default(0)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  activityMinutes BoardActivityMinute[]
 
   @@index([workspaceId, updatedAt])
+}
+
+model BoardActivityMinute {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  boardId   String
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  minute    DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([userId, minute])
+  @@index([boardId, minute])
 }
 
 model WorkspaceInvite {
@@ -94,13 +109,13 @@ model WorkspaceInvite {
 }
 
 model Pomodoro {
-  workspaceId     String          @id
-  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  status          PomodoroStatus  @default(IDLE)
-  durationSeconds Int             @default(1500)
+  workspaceId      String         @id
+  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  status           PomodoroStatus @default(IDLE)
+  durationSeconds  Int            @default(1500)
   remainingSeconds Int            @default(1500)
-  startedAt       DateTime?
-  endsAt          DateTime?
-  updatedById     String?
-  updatedAt       DateTime        @updatedAt
+  startedAt        DateTime?
+  endsAt           DateTime?
+  updatedById      String?
+  updatedAt        DateTime       @updatedAt
 }

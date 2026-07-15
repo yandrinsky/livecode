@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { db } from "./db.js";
 import { requireAuth, signToken } from "./auth.js";
-import { workspaceAccess } from "./access.js";
+import { boardAccess, workspaceAccess } from "./access.js";
 
 export const routes = Router();
 
@@ -105,6 +105,65 @@ routes.get("/boards/:boardId", asyncRoute(async (req, res) => {
   });
   if (!board) return res.status(404).json({ message: "Доска не найдена" });
   res.json({ board });
+}));
+
+routes.post("/boards/:boardId/activity", asyncRoute(async (req, res) => {
+  const board = await boardAccess(req.params.boardId, req.user.id);
+  if (!board) return res.status(404).json({ message: "Доска не найдена" });
+  const pomodoro = await db.pomodoro.findUnique({ where: { workspaceId: board.workspaceId } });
+  if (pomodoro?.status !== "RUNNING" || !pomodoro.endsAt || pomodoro.endsAt <= new Date()) {
+    return res.status(204).end();
+  }
+  const minute = new Date();
+  minute.setUTCSeconds(0, 0);
+  await db.boardActivityMinute.upsert({
+    where: { userId_minute: { userId: req.user.id, minute } },
+    create: { userId: req.user.id, boardId: board.id, minute },
+    update: { boardId: board.id },
+  });
+  res.status(204).end();
+}));
+
+routes.get("/workspaces/:workspaceId/activity", asyncRoute(async (req, res) => {
+  const access = await workspaceAccess(req.params.workspaceId, req.user.id);
+  if (!access) return res.status(404).json({ message: "Рабочее пространство не найдено" });
+  const query = z.object({
+    userId: z.string().uuid(),
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    timezoneOffset: z.coerce.number().int().min(-840).max(840).default(0),
+  }).parse(req.query);
+  const member = await db.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId: access.id, userId: query.userId } },
+    include: { user: { select: { id: true, displayName: true } } },
+  });
+  if (!member) return res.status(404).json({ message: "Участник пространства не найден" });
+  const start = new Date(`${query.from}T00:00:00.000Z`);
+  const end = new Date(`${query.to}T00:00:00.000Z`);
+  start.setUTCMinutes(start.getUTCMinutes() + query.timezoneOffset);
+  end.setUTCDate(end.getUTCDate() + 1);
+  end.setUTCMinutes(end.getUTCMinutes() + query.timezoneOffset);
+  if (end.getTime() - start.getTime() > 370 * 864e5) return res.status(400).json({ message: "Период не должен превышать 370 дней" });
+  const pulses = await db.boardActivityMinute.findMany({
+    where: { userId: query.userId, board: { workspaceId: access.id }, minute: { gte: start, lt: end } },
+    select: { minute: true, board: { select: { id: true, title: true } } },
+    orderBy: { minute: "asc" },
+  });
+  const days = new Map<string, { date: string; seconds: number; boards: Map<string, { id: string; title: string; seconds: number }> }>();
+  for (const pulse of pulses) {
+    const localMinute = new Date(pulse.minute.getTime() - query.timezoneOffset * 60_000);
+    const date = localMinute.toISOString().slice(0, 10);
+    const day = days.get(date) ?? { date, seconds: 0, boards: new Map() };
+    const board = day.boards.get(pulse.board.id) ?? { ...pulse.board, seconds: 0 };
+    day.seconds += 60;
+    board.seconds += 60;
+    day.boards.set(board.id, board);
+    days.set(date, day);
+  }
+  res.json({
+    user: member.user,
+    days: [...days.values()].map((day) => ({ ...day, boards: [...day.boards.values()].sort((a, b) => b.seconds - a.seconds) })),
+  });
 }));
 
 routes.patch("/boards/:boardId", asyncRoute(async (req, res) => {

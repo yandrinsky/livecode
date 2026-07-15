@@ -1,7 +1,7 @@
 import { ArrowLeftOutlined, CheckCircleFilled, CloseOutlined, CodeOutlined, PlayCircleFilled, SaveOutlined, TeamOutlined } from "@ant-design/icons";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { Avatar, Button, Skeleton, Tag, Tooltip } from "antd";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import ts from "typescript";
 import { api } from "../api";
@@ -52,6 +52,19 @@ export function BoardPage() {
 
   useEffect(() => {
     api<{ board: Board }>(`/boards/${boardId}`).then(({ board: value }) => { setBoard(value); setCode(value.content); });
+  }, [boardId]);
+
+  useEffect(() => {
+    const reportActivity = () => {
+      if (document.visibilityState === "visible") void api(`/boards/${boardId}/activity`, { method: "POST" }).catch(() => undefined);
+    };
+    reportActivity();
+    const interval = window.setInterval(reportActivity, 30_000);
+    document.addEventListener("visibilitychange", reportActivity);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", reportActivity);
+    };
   }, [boardId]);
 
   useEffect(() => {
@@ -195,7 +208,8 @@ export function BoardPage() {
     setAndStoreSessionWidth(sessionWidth + (event.key === "ArrowLeft" ? 24 : -24));
   };
 
-  const run = () => {
+  const run = useCallback(() => {
+    if (running) return;
     setRunning(true); setOutput(["▶ Запуск..."]);
     const js = ts.transpile(code, { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, allowJs: true });
     const workerSource = `const exports = {}; const module = { exports }; const logs = []; console.log = (...args) => postMessage({type:'log', value:args.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ')}); try { ${js}\n postMessage({type:'done'}); } catch (error) { postMessage({type:'error', value:error.stack || error.message}); }`;
@@ -208,7 +222,18 @@ export function BoardPage() {
       if (event.data.type === "error") { window.clearTimeout(timeout); result.push(`Ошибка: ${event.data.value}`); setOutput([...result]); setRunning(false); worker.terminate(); }
       if (event.data.type === "done") { window.clearTimeout(timeout); setOutput(result.length ? result : ["✓ Выполнено без вывода"]); setRunning(false); worker.terminate(); }
     };
-  };
+  }, [code, running]);
+
+  useEffect(() => {
+    const runWithKeyboard = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        run();
+      }
+    };
+    window.addEventListener("keydown", runWithKeyboard, true);
+    return () => window.removeEventListener("keydown", runWithKeyboard, true);
+  }, [run]);
 
   if (!board) return <div className="board-loading"><Skeleton active paragraph={{ rows: 12 }} /></div>;
   return <div className="board-room">
@@ -218,7 +243,7 @@ export function BoardPage() {
       <Tag className="language-tag">{board.language === "TYPESCRIPT" ? "TypeScript" : "JavaScript"}</Tag>
       <div className="save-state">{saved ? <><CheckCircleFilled /> сохранено · v{board.version}</> : <><SaveOutlined /> сохраняем...</>}</div>
       <div className="presence"><Avatar.Group max={{ count: 3 }}>{presence.map((person) => <Tooltip title={person.displayName} key={person.id}><Avatar>{person.displayName.slice(0, 1)}</Avatar></Tooltip>)}</Avatar.Group><span><i /> {presence.length || 1} в комнате</span></div>
-      <Button className="run-button" type="primary" icon={<PlayCircleFilled />} loading={running} onClick={run}>Запустить</Button>
+      <Button className="run-button" type="primary" icon={<PlayCircleFilled />} loading={running} onClick={run} title="Ctrl + Enter">Запустить</Button>
     </header>
     <section className="board-context"><CodeOutlined /><div><span>УСЛОВИЕ</span><p>{board.description || "Условие не добавлено. Обсудите задачу прямо во время сессии."}</p></div><button><CloseOutlined /></button></section>
     <main className="editor-layout" style={{ "--session-pane-width": `${sessionWidth}px` } as CSSProperties}>

@@ -6,6 +6,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { Pomodoro } from "../components/Pomodoro";
+import { ActivityCalendar } from "../components/ActivityCalendar";
 import type { Board, Workspace } from "../types";
 
 export function WorkspacePage() {
@@ -43,6 +44,7 @@ export function WorkspacePage() {
       <div className="practice-note"><span className="eyebrow">СЕГОДНЯШНИЙ РИТМ</span><h3>Одна задача.<br/>Один ясный шаг.</h3><p>Запустите таймер — его увидят все участники пространства.</p></div>
       <div className="member-stack"><span className="eyebrow">В КОМАНДЕ</span>{workspace.members?.map((member) => <div key={member.user.id}><span>{member.user.displayName.slice(0, 1)}</span><p><b>{member.user.displayName}</b><small>{member.role === "OWNER" ? "владелец" : "наставник"}</small></p></div>)}</div>
     </div>
+    <ActivityCalendar workspace={workspace} />
     <div className="section-heading"><div><span>02</span><h2>Задачи</h2></div><small>{boards.length} из {workspace.boards?.length ?? 0}</small></div>
     <div className="board-filters"><Input allowClear prefix={<SearchOutlined />} placeholder="Найти задачу..." value={query} onChange={(e) => setQuery(e.target.value)} /><Select value={group} onChange={setGroup} options={[{ value: "all", label: "Все группы" }, ...groups.map((g) => ({ value: g, label: g }))]} /><Select value={sort} onChange={setSort} options={[{ value: "updatedAt", label: "Сначала изменённые" }, { value: "createdAt", label: "Сначала новые" }]} /><Segmented value={view} onChange={(v) => setView(v as typeof view)} options={[{ value: "grid", icon: <AppstoreOutlined /> }, { value: "list", icon: <BarsOutlined /> }]} /></div>
     {boards.length === 0 ? <Empty description="Здесь пока нет подходящих задач"><Button type="primary" onClick={() => setBoardModal(true)}>Создать первую</Button></Empty> : <section className={`board-grid board-grid--${view}`}>{boards.map((board) => <Link className="board-card" to={`/workspace/${workspace.id}/board/${board.id}`} key={board.id}>
