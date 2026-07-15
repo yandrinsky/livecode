@@ -121,15 +121,14 @@ try {
     token: student.token,
     method: "POST",
     expected: 201,
-    body: JSON.stringify({ email: teacher.email }),
   });
-  await request(`/invites/${invite.token}/accept`, { token: outsider.token, method: "POST", expected: 403 });
   const inviteInfo = await request(`/invites/${invite.token}`, { token: teacher.token });
   assert(inviteInfo.invite.workspace.id === workspace.id, "Приглашение ведёт не в тот workspace");
+  assert(!("email" in inviteInfo.invite), "Одноразовое приглашение не должно содержать email");
   const accepted = await request(`/invites/${invite.token}/accept`, { token: teacher.token, method: "POST" });
   assert(accepted.workspaceId === workspace.id, "Accept вернул другой workspace");
-  await request(`/invites/${invite.token}/accept`, { token: teacher.token, method: "POST", expected: 404 });
-  checked("приглашение по email, защита от чужого аккаунта и одноразовое принятие");
+  await request(`/invites/${invite.token}/accept`, { token: outsider.token, method: "POST", expected: 404 });
+  checked("приглашение без email и одноразовое принятие первым аккаунтом");
 
   const teacherAfter = await request("/workspaces", { token: teacher.token });
   assert(teacherAfter.workspaces.some((item) => item.id === workspace.id), "Workspace не появился у наставника");
@@ -250,6 +249,20 @@ try {
   teacherSocket.emit("workspace:leave", workspace.id);
   await workspaceLeavePresence;
   checked("очистка presence при выходе из board/workspace комнат");
+
+  const { invite: racingInvite } = await request(`/workspaces/${workspace.id}/invites`, {
+    token: student.token,
+    method: "POST",
+    expected: 201,
+  });
+  const racingResults = await Promise.allSettled([
+    request(`/invites/${racingInvite.token}/accept`, { token: teacher.token, method: "POST" }),
+    request(`/invites/${racingInvite.token}/accept`, { token: outsider.token, method: "POST" }),
+  ]);
+  assert(racingResults.filter((result) => result.status === "fulfilled").length === 1, "Одновременное принятие должно дать доступ ровно одному аккаунту");
+  assert(racingResults.filter((result) => result.status === "rejected").length === 1, "Второй одновременный запрос должен быть отклонён");
+  await request(`/invites/${racingInvite.token}`, { token: student.token, expected: 404 });
+  checked("атомарное одноразовое принятие при конкурирующих запросах");
 
   console.log(`\nВсе сценарии пройдены: ${checks.length}. Workspace: ${workspace.id}, Board: ${board.id}`);
 } finally {

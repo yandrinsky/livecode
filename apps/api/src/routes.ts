@@ -188,26 +188,44 @@ routes.delete("/boards/:boardId", asyncRoute(async (req, res) => {
 routes.post("/workspaces/:workspaceId/invites", asyncRoute(async (req, res) => {
   const workspace = await db.workspace.findFirst({ where: { id: req.params.workspaceId, ownerId: req.user.id } });
   if (!workspace) return res.status(403).json({ message: "Приглашения создаёт владелец пространства" });
-  const { email } = z.object({ email: z.string().email().transform((v) => v.toLowerCase()) }).parse(req.body);
   const invite = await db.workspaceInvite.create({
-    data: { email, workspaceId: workspace.id, createdById: req.user.id, token: randomBytes(24).toString("hex"), expiresAt: new Date(Date.now() + 7 * 864e5) },
+    data: { workspaceId: workspace.id, createdById: req.user.id, token: randomBytes(24).toString("hex"), expiresAt: new Date(Date.now() + 7 * 864e5) },
   });
-  res.status(201).json({ invite: { ...invite, acceptPath: `/invite/${invite.token}` } });
+  res.status(201).json({ invite: { token: invite.token, expiresAt: invite.expiresAt, acceptPath: `/invite/${invite.token}` } });
 }));
 
 routes.get("/invites/:token", asyncRoute(async (req, res) => {
-  const invite = await db.workspaceInvite.findUnique({ where: { token: req.params.token }, include: { workspace: true, createdBy: { select: { displayName: true } } } });
+  const invite = await db.workspaceInvite.findUnique({
+    where: { token: req.params.token },
+    select: {
+      acceptedAt: true,
+      expiresAt: true,
+      workspace: { select: { id: true, name: true } },
+      createdBy: { select: { displayName: true } },
+    },
+  });
   if (!invite || invite.acceptedAt || invite.expiresAt < new Date()) return res.status(404).json({ message: "Приглашение недействительно" });
-  res.json({ invite });
+  res.json({ invite: { workspace: invite.workspace, createdBy: invite.createdBy, expiresAt: invite.expiresAt } });
 }));
 
 routes.post("/invites/:token/accept", asyncRoute(async (req, res) => {
-  const invite = await db.workspaceInvite.findUnique({ where: { token: req.params.token } });
-  if (!invite || invite.acceptedAt || invite.expiresAt < new Date()) return res.status(404).json({ message: "Приглашение недействительно" });
-  if (invite.email !== req.user.email) return res.status(403).json({ message: `Приглашение выписано на ${invite.email}` });
-  await db.$transaction([
-    db.workspaceMember.upsert({ where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId: req.user.id } }, create: { workspaceId: invite.workspaceId, userId: req.user.id }, update: {} }),
-    db.workspaceInvite.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } }),
-  ]);
-  res.json({ workspaceId: invite.workspaceId });
+  const workspaceId = await db.$transaction(async (tx) => {
+    const invite = await tx.workspaceInvite.findUnique({ where: { token: req.params.token } });
+    if (!invite) return null;
+
+    const claimed = await tx.workspaceInvite.updateMany({
+      where: { id: invite.id, acceptedAt: null, expiresAt: { gt: new Date() } },
+      data: { acceptedAt: new Date() },
+    });
+    if (claimed.count !== 1) return null;
+
+    await tx.workspaceMember.upsert({
+      where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId: req.user.id } },
+      create: { workspaceId: invite.workspaceId, userId: req.user.id },
+      update: {},
+    });
+    return invite.workspaceId;
+  });
+  if (!workspaceId) return res.status(404).json({ message: "Приглашение недействительно" });
+  res.json({ workspaceId });
 }));

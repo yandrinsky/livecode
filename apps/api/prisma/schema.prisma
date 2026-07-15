@@ -96,7 +96,6 @@ model BoardActivityMinute {
 model WorkspaceInvite {
   id          String    @id @default(uuid())
   token       String    @unique
-  email       String
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   createdById String

@@ -1,6 +1,6 @@
 import { ArrowLeftOutlined, CheckCircleFilled, CloseOutlined, CodeOutlined, PlayCircleFilled, SaveOutlined, TeamOutlined } from "@ant-design/icons";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { Avatar, Button, Skeleton, Tag, Tooltip } from "antd";
+import { Avatar, Button, Drawer, Skeleton, Tag, Tooltip } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import ts from "typescript";
@@ -39,6 +39,7 @@ export function BoardPage() {
   const [presence, setPresence] = useState<User[]>([]);
   const [output, setOutput] = useState<string[]>(["Готово к запуску. Добавьте console.log, чтобы увидеть результат."]);
   const [running, setRunning] = useState(false);
+  const [mobileConsoleOpen, setMobileConsoleOpen] = useState(false);
   const [sessionWidth, setSessionWidth] = useState(storedSessionWidth);
   const [resizingSession, setResizingSession] = useState(false);
   const remote = useRef(false);
@@ -47,6 +48,7 @@ export function BoardPage() {
   const editorRef = useRef<EditorInstance | null>(null);
   const monacoRef = useRef<MonacoInstance | null>(null);
   const selectionDisposable = useRef<{ dispose: () => void } | null>(null);
+  const editorPointerCleanup = useRef<(() => void) | null>(null);
   const remoteDecorations = useRef(new Map<string, DecorationCollection>());
   const resizeState = useRef<{ startX: number; startWidth: number; width: number } | null>(null);
 
@@ -140,6 +142,37 @@ export function BoardPage() {
   }, []);
 
   useEffect(() => {
+    let layoutFrame = 0;
+    const refreshEditorLayout = () => {
+      window.cancelAnimationFrame(layoutFrame);
+      layoutFrame = window.requestAnimationFrame(() => editorRef.current?.layout());
+    };
+    const releaseStaleFocus = () => {
+      const editorNode = editorRef.current?.getDomNode();
+      const activeElement = document.activeElement;
+      if (editorNode && activeElement instanceof HTMLElement && editorNode.contains(activeElement)) activeElement.blur();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") releaseStaleFocus();
+      else refreshEditorLayout();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", releaseStaleFocus);
+    window.addEventListener("pageshow", refreshEditorLayout);
+    window.addEventListener("focus", refreshEditorLayout);
+    return () => {
+      window.cancelAnimationFrame(layoutFrame);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", releaseStaleFocus);
+      window.removeEventListener("pageshow", refreshEditorLayout);
+      window.removeEventListener("focus", refreshEditorLayout);
+      editorPointerCleanup.current?.();
+      editorPointerCleanup.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     const clampOnResize = () => {
       const next = Math.min(sessionWidth, Math.max(MIN_SESSION_WIDTH, window.innerWidth - 420));
       if (next !== sessionWidth) { setSessionWidth(next); localStorage.setItem(SESSION_WIDTH_KEY, String(next)); }
@@ -160,6 +193,14 @@ export function BoardPage() {
     monacoRef.current = monaco;
     monaco.editor.setTheme("pairboard-dark");
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => undefined);
+    editorPointerCleanup.current?.();
+    const editorNode = editor.getDomNode();
+    const focusFromTouch = () => {
+      editor.layout();
+      editor.focus();
+    };
+    editorNode?.addEventListener("pointerdown", focusFromTouch, true);
+    editorPointerCleanup.current = () => editorNode?.removeEventListener("pointerdown", focusFromTouch, true);
     selectionDisposable.current?.dispose();
     selectionDisposable.current = editor.onDidChangeCursorSelection(({ selection }) => {
       window.clearTimeout(selectionTimer.current);
@@ -210,6 +251,7 @@ export function BoardPage() {
 
   const run = useCallback(() => {
     if (running) return;
+    if (window.matchMedia("(max-width: 760px)").matches) setMobileConsoleOpen(true);
     setRunning(true); setOutput(["▶ Запуск..."]);
     const js = ts.transpile(code, { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, allowJs: true });
     const workerSource = `const exports = {}; const module = { exports }; const logs = []; console.log = (...args) => postMessage({type:'log', value:args.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ')}); try { ${js}\n postMessage({type:'done'}); } catch (error) { postMessage({type:'error', value:error.stack || error.message}); }`;
@@ -243,6 +285,7 @@ export function BoardPage() {
       <Tag className="language-tag">{board.language === "TYPESCRIPT" ? "TypeScript" : "JavaScript"}</Tag>
       <div className="save-state">{saved ? <><CheckCircleFilled /> сохранено · v{board.version}</> : <><SaveOutlined /> сохраняем...</>}</div>
       <div className="presence"><Avatar.Group max={{ count: 3 }}>{presence.map((person) => <Tooltip title={person.displayName} key={person.id}><Avatar>{person.displayName.slice(0, 1)}</Avatar></Tooltip>)}</Avatar.Group><span><i /> {presence.length || 1} в комнате</span></div>
+      <Button className="mobile-console-button" icon={<CodeOutlined />} aria-label="Открыть консоль вывода" onClick={() => setMobileConsoleOpen(true)}><span>Вывод</span></Button>
       <Button className="run-button" type="primary" icon={<PlayCircleFilled />} loading={running} onClick={run} title="Ctrl + Enter">Запустить</Button>
     </header>
     <section className="board-context"><CodeOutlined /><div><span>УСЛОВИЕ</span><p>{board.description || "Условие не добавлено. Обсудите задачу прямо во время сессии."}</p></div><button><CloseOutlined /></button></section>
@@ -257,7 +300,7 @@ export function BoardPage() {
           onChange={updateCode}
           beforeMount={(monaco) => monaco.editor.defineTheme("pairboard-dark", { base: "vs-dark", inherit: true, rules: [], colors: { "editor.background": "#0b0e12", "editor.lineHighlightBackground": "#11161c", "editorCursor.foreground": "#9bff65", "editor.selectionBackground": "#2d4a3f88", "editorLineNumber.foreground": "#3d4652", "editorLineNumber.activeForeground": "#8d99a8" } })}
           onMount={mountEditor}
-          options={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 15, lineHeight: 24, minimap: { enabled: false }, padding: { top: 18 }, smoothScrolling: true, cursorSmoothCaretAnimation: "on", formatOnPaste: true, tabSize: 2, wordWrap: "on" }}
+          options={{ automaticLayout: true, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, lineHeight: 24, minimap: { enabled: false }, padding: { top: 18 }, smoothScrolling: true, cursorSmoothCaretAnimation: "on", formatOnPaste: true, tabSize: 2, wordWrap: "on" }}
         />
       </div>
       <aside className={`session-pane ${resizingSession ? "session-pane--resizing" : ""}`}>
@@ -278,9 +321,20 @@ export function BoardPage() {
           onKeyDown={resizeWithKeyboard}
         ><span /></div>
         <Pomodoro workspaceId={workspaceId} compact />
-        <div className="console"><header><span>КОНСОЛЬ</span><button onClick={() => setOutput([])}>очистить</button></header><pre>{output.map((line, i) => <span key={i}>{line}</span>)}</pre></div>
+        <div className="console"><header><span>КОНСОЛЬ</span><button onClick={() => setOutput([])}>очистить</button></header><pre aria-live="polite">{output.map((line, i) => <span key={i}>{line}</span>)}</pre></div>
         <div className="session-tip"><span>ПОДСКАЗКА НАСТАВНИКУ</span><p>Дайте ученику проговорить идею до первой строки кода.</p></div>
       </aside>
     </main>
+    <Drawer
+      rootClassName="mobile-console-drawer"
+      title={<span className="mobile-console-title">КОНСОЛЬ <i>OUTPUT</i></span>}
+      extra={<Button type="text" size="small" onClick={() => setOutput([])}>очистить</Button>}
+      placement="bottom"
+      height="min(58dvh, 520px)"
+      open={mobileConsoleOpen}
+      onClose={() => setMobileConsoleOpen(false)}
+    >
+      <div className="mobile-console-output"><pre aria-live="polite">{output.map((line, i) => <span key={i}>{line}</span>)}</pre></div>
+    </Drawer>
   </div>;
 }

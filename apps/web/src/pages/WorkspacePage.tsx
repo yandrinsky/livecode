@@ -1,4 +1,4 @@
-import { AppstoreOutlined, ArrowRightOutlined, BarsOutlined, CopyOutlined, PlusOutlined, SearchOutlined, TeamOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, ArrowRightOutlined, BarsOutlined, CopyOutlined, LinkOutlined, PlusOutlined, SearchOutlined, TeamOutlined } from "@ant-design/icons";
 import { Button, Empty, Form, Input, Modal, Radio, Select, Segmented, Skeleton, Tag, message } from "antd";
 import dayjs from "dayjs";
 import { useEffect, useMemo, useState } from "react";
@@ -20,6 +20,7 @@ export function WorkspacePage() {
   const [boardModal, setBoardModal] = useState(false);
   const [inviteModal, setInviteModal] = useState(false);
   const [inviteLink, setInviteLink] = useState("");
+  const [inviteCreating, setInviteCreating] = useState(false);
   const load = () => api<{ workspace: Workspace }>(`/workspaces/${workspaceId}`).then((r) => setWorkspace(r.workspace));
   useEffect(() => { void load(); }, [workspaceId]);
   const groups = [...new Set(workspace?.boards?.map((b) => b.groupName).filter(Boolean) as string[] ?? [])];
@@ -32,13 +33,15 @@ export function WorkspacePage() {
     try { await api(`/workspaces/${workspaceId}/boards`, { method: "POST", body: JSON.stringify(values) }); setBoardModal(false); await load(); }
     catch (error) { message.error(error instanceof Error ? error.message : "Не удалось создать задачу"); }
   };
-  const invite = async ({ email }: { email: string }) => {
-    try { const data = await api<{ invite: { acceptPath: string } }>(`/workspaces/${workspaceId}/invites`, { method: "POST", body: JSON.stringify({ email }) }); setInviteLink(`${location.origin}${data.invite.acceptPath}`); }
+  const invite = async () => {
+    setInviteCreating(true);
+    try { const data = await api<{ invite: { acceptPath: string } }>(`/workspaces/${workspaceId}/invites`, { method: "POST" }); setInviteLink(`${location.origin}${data.invite.acceptPath}`); }
     catch (error) { message.error(error instanceof Error ? error.message : "Не удалось создать приглашение"); }
+    finally { setInviteCreating(false); }
   };
 
   return <div className="workspace-page page-enter">
-    <header className="workspace-hero"><div><div className="crumb">ПРОСТРАНСТВО / {workspace.owner.displayName.toUpperCase()}</div><h1>{workspace.name}</h1><p><TeamOutlined /> {workspace.members?.length ?? 1} участников <i/> {workspace.boards?.length ?? 0} сохранённых задач</p></div><div className="workspace-hero__actions">{workspace.ownerId === user?.id && <Button size="large" onClick={() => setInviteModal(true)}>Пригласить наставника</Button>}<Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setBoardModal(true)}>Новая задача</Button></div></header>
+    <header className="workspace-hero"><div><div className="crumb">ПРОСТРАНСТВО / {workspace.owner.displayName.toUpperCase()}</div><h1>{workspace.name}</h1><p><TeamOutlined /> {workspace.members?.length ?? 1} участников <i/> {workspace.boards?.length ?? 0} сохранённых задач</p></div><div className="workspace-hero__actions">{workspace.ownerId === user?.id && <Button size="large" onClick={() => setInviteModal(true)}>Пригласить участника</Button>}<Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setBoardModal(true)}>Новая задача</Button></div></header>
     <div className="workspace-tools">
       <Pomodoro workspaceId={workspace.id} initial={workspace.pomodoro} />
       <div className="practice-note"><span className="eyebrow">СЕГОДНЯШНИЙ РИТМ</span><h3>Одна задача.<br/>Один ясный шаг.</h3><p>Запустите таймер — его увидят все участники пространства.</p></div>
@@ -60,6 +63,16 @@ export function WorkspacePage() {
       <Form.Item label="Язык" name="language"><Radio.Group optionType="button" buttonStyle="solid" options={[{ label: "TypeScript", value: "TYPESCRIPT" }, { label: "JavaScript", value: "JAVASCRIPT" }]} /></Form.Item>
       <Button block type="primary" size="large" htmlType="submit">Создать и открыть позже</Button>
     </Form></Modal>
-    <Modal title="Пригласить наставника" open={inviteModal} onCancel={() => { setInviteModal(false); setInviteLink(""); }} footer={null}>{inviteLink ? <div className="invite-result"><p>Ссылка действует 7 дней и привязана к указанной почте.</p><Input value={inviteLink} readOnly suffix={<CopyOutlined onClick={() => { void navigator.clipboard.writeText(inviteLink); message.success("Ссылка скопирована"); }} />} /></div> : <Form layout="vertical" onFinish={invite}><Form.Item label="Почта наставника" name="email" rules={[{ required: true, type: "email" }]}><Input size="large" autoFocus placeholder="teacher@example.com" /></Form.Item><Button type="primary" block size="large" htmlType="submit">Создать приглашение</Button></Form>}</Modal>
+    <Modal title="Одноразовое приглашение" open={inviteModal} onCancel={() => { setInviteModal(false); setInviteLink(""); }} footer={null}>{inviteLink ? <div className="invite-result">
+      <div className="invite-result__status"><span>LINK READY</span><b>Доступ готов</b></div>
+      <p>Ссылка действует 7 дней и сработает только один раз. Доступ получит первый вошедший пользователь, который её примет.</p>
+      <Input value={inviteLink} readOnly aria-label="Одноразовая ссылка приглашения" suffix={<Button type="text" aria-label="Скопировать ссылку" icon={<CopyOutlined />} onClick={() => { void navigator.clipboard.writeText(inviteLink).then(() => message.success("Ссылка скопирована")).catch(() => message.error("Не удалось скопировать ссылку")); }} />} />
+    </div> : <div className="invite-create">
+      <div className="invite-create__icon"><LinkOutlined /></div>
+      <h3>Без адреса и лишних шагов</h3>
+      <p>Отправьте ссылку нужному человеку. Email заранее указывать не нужно.</p>
+      <ul><li>активна 7 дней</li><li>сгорает после первого принятия</li><li>создать может только владелец</li></ul>
+      <Button type="primary" block size="large" icon={<LinkOutlined />} loading={inviteCreating} onClick={() => void invite()}>Создать одноразовую ссылку</Button>
+    </div>}</Modal>
   </div>;
 }
