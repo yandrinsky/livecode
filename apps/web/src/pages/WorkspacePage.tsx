@@ -1,10 +1,11 @@
-import { AppstoreOutlined, ArrowRightOutlined, BarsOutlined, CopyOutlined, LinkOutlined, PlusOutlined, SearchOutlined, TeamOutlined } from "@ant-design/icons";
-import { Button, Empty, Form, Input, Modal, Radio, Select, Segmented, Skeleton, Tag, message } from "antd";
+import { AppstoreOutlined, ArrowRightOutlined, BarsOutlined, CopyOutlined, DeleteOutlined, LinkOutlined, MoreOutlined, PlusOutlined, SearchOutlined, TeamOutlined } from "@ant-design/icons";
+import { Button, Dropdown, Empty, Form, Input, Modal, Radio, Select, Segmented, Skeleton, Tag, message } from "antd";
 import dayjs from "dayjs";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { DataLoadError } from "../components/DataLoadError";
 import { Pomodoro } from "../components/Pomodoro";
 import { ActivityCalendar } from "../components/ActivityCalendar";
 import type { Board, Workspace } from "../types";
@@ -13,6 +14,8 @@ export function WorkspacePage() {
   const { workspaceId = "" } = useParams();
   const { user } = useAuth();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"updatedAt" | "createdAt">("updatedAt");
   const [group, setGroup] = useState<string>("all");
@@ -21,13 +24,24 @@ export function WorkspacePage() {
   const [inviteModal, setInviteModal] = useState(false);
   const [inviteLink, setInviteLink] = useState("");
   const [inviteCreating, setInviteCreating] = useState(false);
-  const load = () => api<{ workspace: Workspace }>(`/workspaces/${workspaceId}`).then((r) => setWorkspace(r.workspace));
-  useEffect(() => { void load(); }, [workspaceId]);
+  const [deletingBoardId, setDeletingBoardId] = useState("");
+  const [boardToDelete, setBoardToDelete] = useState<Board | null>(null);
+  const load = () => api<{ workspace: Workspace }>(`/workspaces/${workspaceId}`).then((result) => { setWorkspace(result.workspace); setLoadError(""); });
+  useEffect(() => {
+    let active = true;
+    setWorkspace(null);
+    setLoadError("");
+    api<{ workspace: Workspace }>(`/workspaces/${workspaceId}`)
+      .then((result) => { if (active) setWorkspace(result.workspace); })
+      .catch((reason: unknown) => { if (active) setLoadError(reason instanceof Error ? reason.message : "Не удалось загрузить пространство"); });
+    return () => { active = false; };
+  }, [workspaceId, loadAttempt]);
   const groups = [...new Set(workspace?.boards?.map((b) => b.groupName).filter(Boolean) as string[] ?? [])];
   const boards = useMemo(() => (workspace?.boards ?? []).filter((b) =>
     (group === "all" || b.groupName === group) && `${b.title} ${b.description}`.toLowerCase().includes(query.toLowerCase())
   ).sort((a, b) => new Date(b[sort]).getTime() - new Date(a[sort]).getTime()), [workspace, group, query, sort]);
 
+  if (loadError) return <div className="page-load-error"><DataLoadError title="Пространство недоступно" message={loadError} onRetry={() => setLoadAttempt((attempt) => attempt + 1)} /></div>;
   if (!workspace) return <div className="page-loading"><Skeleton active paragraph={{ rows: 8 }} /></div>;
   const createBoard = async (values: { title: string; description?: string; groupName?: string; language: Board["language"] }) => {
     try { await api(`/workspaces/${workspaceId}/boards`, { method: "POST", body: JSON.stringify(values) }); setBoardModal(false); await load(); }
@@ -38,6 +52,19 @@ export function WorkspacePage() {
     try { const data = await api<{ invite: { acceptPath: string } }>(`/workspaces/${workspaceId}/invites`, { method: "POST" }); setInviteLink(`${location.origin}${data.invite.acceptPath}`); }
     catch (error) { message.error(error instanceof Error ? error.message : "Не удалось создать приглашение"); }
     finally { setInviteCreating(false); }
+  };
+  const deleteBoard = async (board: Board) => {
+    setDeletingBoardId(board.id);
+    try {
+      await api(`/boards/${board.id}`, { method: "DELETE" });
+      message.success(`Задача «${board.title}» удалена`);
+      setBoardToDelete(null);
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "Не удалось удалить задачу");
+    } finally {
+      setDeletingBoardId("");
+    }
   };
 
   return <div className="workspace-page page-enter">
@@ -50,12 +77,16 @@ export function WorkspacePage() {
     <ActivityCalendar workspace={workspace} />
     <div className="section-heading"><div><span>02</span><h2>Задачи</h2></div><small>{boards.length} из {workspace.boards?.length ?? 0}</small></div>
     <div className="board-filters"><Input allowClear prefix={<SearchOutlined />} placeholder="Найти задачу..." value={query} onChange={(e) => setQuery(e.target.value)} /><Select value={group} onChange={setGroup} options={[{ value: "all", label: "Все группы" }, ...groups.map((g) => ({ value: g, label: g }))]} /><Select value={sort} onChange={setSort} options={[{ value: "updatedAt", label: "Сначала изменённые" }, { value: "createdAt", label: "Сначала новые" }]} /><Segmented value={view} onChange={(v) => setView(v as typeof view)} options={[{ value: "grid", icon: <AppstoreOutlined /> }, { value: "list", icon: <BarsOutlined /> }]} /></div>
-    {boards.length === 0 ? <Empty description="Здесь пока нет подходящих задач"><Button type="primary" onClick={() => setBoardModal(true)}>Создать первую</Button></Empty> : <section className={`board-grid board-grid--${view}`}>{boards.map((board) => <Link className="board-card" to={`/workspace/${workspace.id}/board/${board.id}`} key={board.id}>
-      <div className="board-card__head"><Tag>{board.language === "TYPESCRIPT" ? "TS" : "JS"}</Tag><span>{board.groupName ?? "Без группы"}</span><small>{dayjs(board.updatedAt).format("D MMM · HH:mm")}</small></div>
-      <h3>{board.title}</h3><p>{board.description || "Описание можно добавить позже."}</p>
-      <pre>{board.content.split("\n").slice(0, 4).join("\n")}</pre>
-      <footer><span>Версия {board.version}</span><b>Открыть доску <ArrowRightOutlined /></b></footer>
-    </Link>)}</section>}
+    {boards.length === 0 ? <Empty description="Здесь пока нет подходящих задач"><Button type="primary" onClick={() => setBoardModal(true)}>Создать первую</Button></Empty> : <section className={`board-grid board-grid--${view}`}>{boards.map((board) => <div className="board-card-shell" key={board.id}>
+      <Link className="board-card" to={`/workspace/${workspace.id}/board/${board.id}`}>
+        <div className="board-card__head"><Tag>{board.language === "TYPESCRIPT" ? "TS" : "JS"}</Tag><span>{board.groupName ?? "Без группы"}</span><small>{dayjs(board.updatedAt).format("D MMM · HH:mm")}</small></div>
+        <h3>{board.title}</h3><p>{board.description || "Описание можно добавить позже."}</p>
+        <pre>{board.content.split("\n").slice(0, 4).join("\n")}</pre>
+        <footer><span>Версия {board.version}</span><b>Открыть доску <ArrowRightOutlined /></b></footer>
+      </Link>
+      {workspace.ownerId === user?.id && <Dropdown trigger={["click"]} placement="bottomRight" menu={{ items: [{ key: "delete", danger: true, icon: <DeleteOutlined />, label: "Удалить задачу", onClick: () => setBoardToDelete(board) }] }}><Button className="board-card__menu-trigger" type="text" loading={deletingBoardId === board.id} icon={<MoreOutlined />} aria-label={`Меню задачи «${board.title}»`} title="Действия с задачей" /></Dropdown>}
+    </div>)}</section>}
+    <Modal title={boardToDelete ? `Удалить «${boardToDelete.title}»?` : "Удалить задачу?"} open={Boolean(boardToDelete)} okText="Удалить" cancelText="Отмена" okButtonProps={{ danger: true }} confirmLoading={Boolean(deletingBoardId)} cancelButtonProps={{ disabled: Boolean(deletingBoardId) }} closable={!deletingBoardId} maskClosable={!deletingBoardId} onCancel={() => { if (!deletingBoardId) setBoardToDelete(null); }} onOk={() => { if (boardToDelete) void deleteBoard(boardToDelete); }}><p>Решение будет удалено без возможности восстановления.</p></Modal>
     <Modal title="Новая задача" open={boardModal} onCancel={() => setBoardModal(false)} footer={null} destroyOnHidden><Form layout="vertical" initialValues={{ language: "TYPESCRIPT" }} onFinish={createBoard}>
       <Form.Item label="Название" name="title" rules={[{ required: true, min: 2 }]}><Input size="large" autoFocus placeholder="Например, Развернуть связный список" /></Form.Item>
       <Form.Item label="Условие" name="description"><Input.TextArea rows={3} placeholder="Коротко опишите задачу" /></Form.Item>

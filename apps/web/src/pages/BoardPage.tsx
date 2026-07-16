@@ -1,29 +1,38 @@
-import { ArrowLeftOutlined, CheckCircleFilled, CloseOutlined, CodeOutlined, PlayCircleFilled, SaveOutlined, TeamOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, ArrowLeftOutlined, CheckCircleFilled, CodeOutlined, DownOutlined, HomeOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlayCircleFilled, ReloadOutlined, SaveOutlined, StopOutlined, TeamOutlined, UpOutlined, WarningOutlined } from "@ant-design/icons";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { Avatar, Button, Drawer, Skeleton, Tag, Tooltip } from "antd";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import ts from "typescript";
-import { api } from "../api";
+import { ApiError, api } from "../api";
+import { createCodeWorkerSource } from "../codeRunner";
 import { Pomodoro } from "../components/Pomodoro";
-import { liveSocket } from "../socket";
-import type { Board, User } from "../types";
+import { useLiveSocket } from "../socket";
+import type { Board, User, Workspace } from "../types";
 
 type EditorInstance = Parameters<OnMount>[0];
 type MonacoInstance = Parameters<OnMount>[1];
 type DecorationCollection = ReturnType<EditorInstance["createDecorationsCollection"]>;
 type BoardSelection = { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
 type RemoteSelection = { boardId: string; clientId: string; user: User; selection: BoardSelection };
+type BoardLoadError = { message: string; status?: number };
 
 const DEFAULT_SESSION_WIDTH = 305;
 const MIN_SESSION_WIDTH = 260;
 const MAX_SESSION_WIDTH = 720;
 const SESSION_WIDTH_KEY = "pairboard_session_width";
+const TASK_SIDEBAR_KEY = "pairboard_task_sidebar_open";
 
 function storedSessionWidth() {
   if (typeof window === "undefined") return DEFAULT_SESSION_WIDTH;
   const value = Number(localStorage.getItem(SESSION_WIDTH_KEY));
   return Number.isFinite(value) ? Math.min(MAX_SESSION_WIDTH, Math.max(MIN_SESSION_WIDTH, value)) : DEFAULT_SESSION_WIDTH;
+}
+
+function storedTaskSidebarOpen() {
+  if (typeof window === "undefined") return true;
+  if (window.innerWidth <= 760) return false;
+  return localStorage.getItem(TASK_SIDEBAR_KEY) !== "false";
 }
 
 function colorIndex(id: string) {
@@ -32,14 +41,19 @@ function colorIndex(id: string) {
 
 export function BoardPage() {
   const { workspaceId = "", boardId = "" } = useParams();
-  const socket = useMemo(liveSocket, []);
+  const { socket, status: realtimeStatus, error: realtimeError, retry: retryRealtime } = useLiveSocket();
   const [board, setBoard] = useState<Board | null>(null);
+  const [workspaceBoards, setWorkspaceBoards] = useState<Board[]>([]);
+  const [loadError, setLoadError] = useState<BoardLoadError | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [code, setCode] = useState("");
   const [saved, setSaved] = useState(true);
   const [presence, setPresence] = useState<User[]>([]);
   const [output, setOutput] = useState<string[]>(["Готово к запуску. Добавьте console.log, чтобы увидеть результат."]);
   const [running, setRunning] = useState(false);
   const [mobileConsoleOpen, setMobileConsoleOpen] = useState(false);
+  const [descriptionOpen, setDescriptionOpen] = useState(true);
+  const [taskSidebarOpen, setTaskSidebarOpen] = useState(storedTaskSidebarOpen);
   const [sessionWidth, setSessionWidth] = useState(storedSessionWidth);
   const [resizingSession, setResizingSession] = useState(false);
   const remote = useRef(false);
@@ -49,12 +63,38 @@ export function BoardPage() {
   const monacoRef = useRef<MonacoInstance | null>(null);
   const selectionDisposable = useRef<{ dispose: () => void } | null>(null);
   const editorPointerCleanup = useRef<(() => void) | null>(null);
+  const activeWorker = useRef<{ worker: Worker; url: string } | null>(null);
   const remoteDecorations = useRef(new Map<string, DecorationCollection>());
   const resizeState = useRef<{ startX: number; startWidth: number; width: number } | null>(null);
 
   useEffect(() => {
-    api<{ board: Board }>(`/boards/${boardId}`).then(({ board: value }) => { setBoard(value); setCode(value.content); });
-  }, [boardId]);
+    let active = true;
+    setBoard(null);
+    setLoadError(null);
+    setDescriptionOpen(true);
+    api<{ board: Board }>(`/boards/${boardId}`)
+      .then(({ board: value }) => {
+        if (!active) return;
+        setBoard(value);
+        setCode(value.content);
+        void api<{ workspace: Workspace }>(`/workspaces/${workspaceId}`)
+          .then(({ workspace }) => {
+            if (!active) return;
+            setWorkspaceBoards(workspace.boards ?? [value]);
+          })
+          .catch(() => { if (active) setWorkspaceBoards([value]); });
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setLoadError({
+          message: reason instanceof Error ? reason.message : "Не удалось загрузить доску",
+          status: reason instanceof ApiError ? reason.status : undefined,
+        });
+      });
+    return () => { active = false; };
+  }, [workspaceId, boardId, loadAttempt]);
+
+  useEffect(() => { setWorkspaceBoards([]); }, [workspaceId]);
 
   useEffect(() => {
     const reportActivity = () => {
@@ -70,6 +110,7 @@ export function BoardPage() {
   }, [boardId]);
 
   useEffect(() => {
+    if (board?.id !== boardId) return;
     const onChange = (data: { boardId: string; content: string; version: number }) => {
       if (data.boardId !== boardId) return;
       remote.current = true; setCode(data.content); setSaved(true); setBoard((b) => b ? { ...b, version: data.version } : b);
@@ -118,17 +159,20 @@ export function BoardPage() {
       remoteDecorations.current.get(data.clientId)?.clear();
       remoteDecorations.current.delete(data.clientId);
     };
-    socket.emit("board:join", boardId);
+    const joinBoard = () => socket.emit("board:join", boardId);
+    joinBoard();
+    socket.on("connect", joinBoard);
     socket.on("board:change", onChange); socket.on("board:saved", onSaved); socket.on("board:selection", onSelection); socket.on("board:selection-clear", clearSelection); socket.on("presence:update", setPresence);
     return () => {
       socket.emit("board:leave", boardId);
+      socket.off("connect", joinBoard);
       socket.off("board:change", onChange); socket.off("board:saved", onSaved); socket.off("board:selection", onSelection); socket.off("board:selection-clear", clearSelection); socket.off("presence:update", setPresence);
       selectionDisposable.current?.dispose(); selectionDisposable.current = null;
       window.clearTimeout(selectionTimer.current);
       for (const collection of remoteDecorations.current.values()) collection.clear();
       remoteDecorations.current.clear();
     };
-  }, [socket, workspaceId, boardId]);
+  }, [socket, workspaceId, boardId, board?.id]);
 
   useEffect(() => {
     const ignoreBrowserSave = (event: KeyboardEvent) => {
@@ -249,21 +293,52 @@ export function BoardPage() {
     setAndStoreSessionWidth(sessionWidth + (event.key === "ArrowLeft" ? 24 : -24));
   };
 
+  const stopRun = useCallback(() => {
+    const active = activeWorker.current;
+    if (!active) return;
+    activeWorker.current = null;
+    active.worker.terminate();
+    URL.revokeObjectURL(active.url);
+    setOutput((current) => [...current, "■ Выполнение остановлено пользователем"]);
+    setRunning(false);
+  }, []);
+
+  useEffect(() => () => {
+    const active = activeWorker.current;
+    if (!active) return;
+    active.worker.terminate();
+    URL.revokeObjectURL(active.url);
+    activeWorker.current = null;
+  }, []);
+
   const run = useCallback(() => {
     if (running) return;
     if (window.matchMedia("(max-width: 760px)").matches) setMobileConsoleOpen(true);
     setRunning(true); setOutput(["▶ Запуск..."]);
     const js = ts.transpile(code, { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, allowJs: true });
-    const workerSource = `const exports = {}; const module = { exports }; const logs = []; console.log = (...args) => postMessage({type:'log', value:args.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ')}); try { ${js}\n postMessage({type:'done'}); } catch (error) { postMessage({type:'error', value:error.stack || error.message}); }`;
+    const workerSource = createCodeWorkerSource(js);
     const blob = new Blob([workerSource], { type: "text/javascript" });
-    const worker = new Worker(URL.createObjectURL(blob));
+    const workerUrl = URL.createObjectURL(blob);
+    const worker = new Worker(workerUrl);
+    activeWorker.current = { worker, url: workerUrl };
     const result: string[] = [];
-    const timeout = window.setTimeout(() => { worker.terminate(); setOutput([...result, "■ Выполнение остановлено: лимит 2 секунды"]); setRunning(false); }, 2000);
-    worker.onmessage = (event) => {
-      if (event.data.type === "log") { result.push(event.data.value); setOutput([...result]); }
-      if (event.data.type === "error") { window.clearTimeout(timeout); result.push(`Ошибка: ${event.data.value}`); setOutput([...result]); setRunning(false); worker.terminate(); }
-      if (event.data.type === "done") { window.clearTimeout(timeout); setOutput(result.length ? result : ["✓ Выполнено без вывода"]); setRunning(false); worker.terminate(); }
+    let settled = false;
+    const finish = (nextOutput: string[]) => {
+      if (settled) return;
+      settled = true;
+      if (activeWorker.current?.worker === worker) activeWorker.current = null;
+      worker.terminate();
+      URL.revokeObjectURL(workerUrl);
+      setOutput(nextOutput);
+      setRunning(false);
     };
+    worker.onmessage = (event: MessageEvent<{ type: "log" | "error" | "done"; value?: string }>) => {
+      if (event.data.type === "log") { result.push(event.data.value ?? ""); setOutput([...result]); }
+      if (event.data.type === "error") finish([...result, `Ошибка: ${event.data.value ?? "Неизвестная ошибка"}`]);
+      if (event.data.type === "done") finish(result.length ? result : ["✓ Выполнено без вывода"]);
+    };
+    worker.onerror = (event) => { event.preventDefault(); finish([...result, `Ошибка: ${event.message}`]); };
+    worker.onmessageerror = () => finish([...result, "Ошибка: не удалось прочитать результат выполнения"]);
   }, [code, running]);
 
   useEffect(() => {
@@ -277,7 +352,37 @@ export function BoardPage() {
     return () => window.removeEventListener("keydown", runWithKeyboard, true);
   }, [run]);
 
-  if (!board) return <div className="board-loading"><Skeleton active paragraph={{ rows: 12 }} /></div>;
+  const toggleTaskSidebar = () => {
+    setTaskSidebarOpen((open) => {
+      const next = !open;
+      localStorage.setItem(TASK_SIDEBAR_KEY, String(next));
+      return next;
+    });
+  };
+
+  if (loadError) {
+    const accessError = loadError.status === 403 || loadError.status === 404;
+    const authError = loadError.status === 401;
+    const title = authError ? "Сессия закончилась" : accessError ? "Доска недоступна" : "Не удалось открыть доску";
+    const description = authError
+      ? "Войдите снова — после авторизации можно повторно открыть эту ссылку."
+      : accessError
+        ? "Возможно, у вас нет доступа, ссылка устарела или задача была удалена."
+        : "Проверьте соединение с сервером приложения и попробуйте загрузить доску ещё раз.";
+    return <div className="board-error" role="alert" aria-live="assertive"><section className="board-error__panel">
+      <div className="board-error__signal"><WarningOutlined /><span>{loadError.status ? `HTTP ${loadError.status}` : "NO RESPONSE"}</span></div>
+      <div className="eyebrow">BOARD ACCESS</div>
+      <h1>{title}</h1>
+      <p>{description}</p>
+      <small>{loadError.message}</small>
+      <div className="board-error__actions">
+        <Link to={authError ? "/login" : "/"}><Button type="primary" size="large" icon={<HomeOutlined />}>{authError ? "Войти снова" : "В кабинет"}</Button></Link>
+        <Button size="large" icon={<ReloadOutlined />} onClick={() => setLoadAttempt((attempt) => attempt + 1)}>Повторить</Button>
+      </div>
+    </section></div>;
+  }
+  if (!board || board.id !== boardId) return <div className="board-loading"><Skeleton active paragraph={{ rows: 12 }} /></div>;
+  const navigationBoards = workspaceBoards.length ? workspaceBoards : [board];
   return <div className="board-room">
     <header className="board-toolbar">
       <Link to={`/workspace/${workspaceId}`} className="board-toolbar__back"><ArrowLeftOutlined /></Link>
@@ -286,10 +391,24 @@ export function BoardPage() {
       <div className="save-state">{saved ? <><CheckCircleFilled /> сохранено · v{board.version}</> : <><SaveOutlined /> сохраняем...</>}</div>
       <div className="presence"><Avatar.Group max={{ count: 3 }}>{presence.map((person) => <Tooltip title={person.displayName} key={person.id}><Avatar>{person.displayName.slice(0, 1)}</Avatar></Tooltip>)}</Avatar.Group><span><i /> {presence.length || 1} в комнате</span></div>
       <Button className="mobile-console-button" icon={<CodeOutlined />} aria-label="Открыть консоль вывода" onClick={() => setMobileConsoleOpen(true)}><span>Вывод</span></Button>
-      <Button className="run-button" type="primary" icon={<PlayCircleFilled />} loading={running} onClick={run} title="Ctrl + Enter">Запустить</Button>
+      <Button className={`run-button ${running ? "run-button--stop" : ""}`} type={running ? "default" : "primary"} danger={running} icon={running ? <StopOutlined /> : <PlayCircleFilled />} onClick={running ? stopRun : run} title={running ? "Остановить выполнение" : "Ctrl + Enter"}>{running ? "Остановить" : "Запустить"}</Button>
     </header>
-    <section className="board-context"><CodeOutlined /><div><span>УСЛОВИЕ</span><p>{board.description || "Условие не добавлено. Обсудите задачу прямо во время сессии."}</p></div><button><CloseOutlined /></button></section>
-    <main className="editor-layout" style={{ "--session-pane-width": `${sessionWidth}px` } as CSSProperties}>
+    <div className={`board-workspace-shell ${taskSidebarOpen ? "board-workspace-shell--sidebar-open" : "board-workspace-shell--sidebar-collapsed"}`}>
+      {taskSidebarOpen && <button className="board-task-nav__scrim" type="button" aria-label="Закрыть список задач" onClick={toggleTaskSidebar} />}
+      <aside className="board-task-nav" aria-label="Задачи рабочего пространства">
+        <header><div><span>WORKSPACE</span><b>Задачи</b><small>{navigationBoards.length}</small></div><button type="button" aria-label={taskSidebarOpen ? "Свернуть список задач" : "Развернуть список задач"} aria-expanded={taskSidebarOpen} onClick={toggleTaskSidebar}>{taskSidebarOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}</button></header>
+        <nav>{navigationBoards.map((item) => <div className={`board-task-nav__row ${item.id === boardId ? "is-active" : ""}`} key={item.id}>
+          <Link className="board-task-nav__item" to={`/workspace/${workspaceId}/board/${item.id}`} title={item.title} aria-label={`Открыть задачу «${item.title}»`} aria-current={item.id === boardId ? "page" : undefined} onClick={() => { if (window.innerWidth <= 760) setTaskSidebarOpen(false); }}>
+            <span className="board-task-nav__language">{item.language === "TYPESCRIPT" ? "TS" : "JS"}</span>
+            <span className="board-task-nav__copy"><b>{item.title}</b><small>{item.groupName ?? "Без группы"}</small></span>
+          </Link>
+        </div>)}</nav>
+        <footer><Link to={`/workspace/${workspaceId}`} aria-label="Все задачи"><AppstoreOutlined /><span>Все задачи</span></Link></footer>
+      </aside>
+      <div className={`board-workspace-content ${realtimeStatus === "error" ? "board-workspace-content--realtime-error" : ""}`}>
+        {realtimeStatus === "error" && <div className="realtime-error" role="alert"><WarningOutlined /><div><b>Совместное редактирование недоступно</b><span>{realtimeError || "Не удалось подключиться к Socket.IO. Изменения пока не синхронизируются."}</span></div><Button size="small" icon={<ReloadOutlined />} onClick={retryRealtime}>Повторить</Button></div>}
+        <section id="board-task-description" className={`board-context ${descriptionOpen ? "" : "board-context--collapsed"}`}><CodeOutlined /><div><span>УСЛОВИЕ</span>{descriptionOpen && <p>{board.description || "Условие не добавлено. Обсудите задачу прямо во время сессии."}</p>}</div><button className="board-context__toggle" type="button" aria-controls="board-task-description" aria-expanded={descriptionOpen} aria-label={descriptionOpen ? "Скрыть условие задачи" : "Показать условие задачи"} title={descriptionOpen ? "Скрыть условие" : "Показать условие"} onClick={() => setDescriptionOpen((open) => !open)}>{descriptionOpen ? <UpOutlined /> : <DownOutlined />}</button></section>
+        <main className="editor-layout" style={{ "--session-pane-width": `${sessionWidth}px` } as CSSProperties}>
       <div className="editor-pane">
         <div className="editor-tab"><span>{board.title.toLowerCase().replaceAll(" ", "-")}.{board.language === "TYPESCRIPT" ? "ts" : "js"}</span><small><TeamOutlined /> LIVE</small></div>
         <Editor
@@ -322,13 +441,14 @@ export function BoardPage() {
         ><span /></div>
         <Pomodoro workspaceId={workspaceId} compact />
         <div className="console"><header><span>КОНСОЛЬ</span><button onClick={() => setOutput([])}>очистить</button></header><pre aria-live="polite">{output.map((line, i) => <span key={i}>{line}</span>)}</pre></div>
-        <div className="session-tip"><span>ПОДСКАЗКА НАСТАВНИКУ</span><p>Дайте ученику проговорить идею до первой строки кода.</p></div>
       </aside>
-    </main>
+        </main>
+      </div>
+    </div>
     <Drawer
       rootClassName="mobile-console-drawer"
       title={<span className="mobile-console-title">КОНСОЛЬ <i>OUTPUT</i></span>}
-      extra={<Button type="text" size="small" onClick={() => setOutput([])}>очистить</Button>}
+      extra={<div className="mobile-console-actions"><Button type="text" size="small" onClick={() => setOutput([])}>очистить</Button>{running && <Button danger type="text" size="small" icon={<StopOutlined />} onClick={stopRun}>стоп</Button>}</div>}
       placement="bottom"
       height="min(58dvh, 520px)"
       open={mobileConsoleOpen}

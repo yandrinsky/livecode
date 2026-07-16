@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { DataLoadError } from "./DataLoadError";
 import type { Workspace } from "../types";
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -11,14 +12,24 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
-  useEffect(() => { api<{ workspaces: Workspace[] }>("/workspaces").then((r) => setWorkspaces(r.workspaces)); }, [location.pathname]);
+  const [loadError, setLoadError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setWorkspaces(null);
+    setLoadError("");
+    api<{ workspaces: Workspace[] }>("/workspaces")
+      .then((result) => { if (active) setWorkspaces(result.workspaces); })
+      .catch((reason: unknown) => { if (active) setLoadError(reason instanceof Error ? reason.message : "Не удалось загрузить список"); });
+    return () => { active = false; };
+  }, [location.pathname, loadAttempt]);
 
   return <div className="app-shell">
     <aside className="rail">
       <Link className="brand" to="/"><span className="brand__mark"><CodeOutlined /></span><span>PAIR<br/>BOARD</span></Link>
       <div className="rail__label">Пространства</div>
       <nav className="workspace-nav">
-        {!workspaces ? <Skeleton active paragraph={{ rows: 3 }} title={false} /> : workspaces.map((workspace, index) =>
+        {loadError ? <DataLoadError compact title="Список недоступен" message={loadError} onRetry={() => setLoadAttempt((attempt) => attempt + 1)} /> : !workspaces ? <Skeleton active paragraph={{ rows: 3 }} title={false} /> : workspaces.map((workspace, index) =>
           <Link className={`workspace-link ${location.pathname.includes(workspace.id) ? "is-active" : ""}`} key={workspace.id} to={`/workspace/${workspace.id}`}>
             <span className="workspace-link__index">{String(index + 1).padStart(2, "0")}</span>
             <span>{workspace.name}</span>
