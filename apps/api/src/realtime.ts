@@ -6,6 +6,7 @@ import { config } from "./config.js";
 import { db } from "./db.js";
 
 type PomodoroAction = { workspaceId: string; action: "start" | "pause" | "reset"; durationSeconds?: number };
+type PomodoroAck = (data: { pomodoro?: unknown; error?: string }) => void;
 type BoardSelection = {
   startLineNumber: number;
   startColumn: number;
@@ -29,7 +30,7 @@ export function attachRealtime(server: HttpServer) {
     socket.on("workspace:join", async (workspaceId: string, ack?: (data: unknown) => void) => {
       if (!(await workspaceAccess(workspaceId, user.id))) return ack?.({ error: "forbidden" });
       await socket.join(`workspace:${workspaceId}`);
-      const pomodoro = await db.pomodoro.findUnique({ where: { workspaceId } });
+      const pomodoro = await completeExpiredPomodoro(io, workspaceId) ?? await db.pomodoro.findUnique({ where: { workspaceId } });
       ack?.({ pomodoro });
       io.to(`workspace:${workspaceId}`).emit("presence:update", roomUsers(io, `workspace:${workspaceId}`));
     });
@@ -69,22 +70,40 @@ export function attachRealtime(server: HttpServer) {
       socket.emit("board:saved", updated);
     });
 
-    socket.on("pomodoro:action", async ({ workspaceId, action, durationSeconds }: PomodoroAction) => {
-      if (!(await workspaceAccess(workspaceId, user.id))) return;
-      const current = await db.pomodoro.findUnique({ where: { workspaceId } });
-      const now = new Date();
-      const duration = Math.min(3600, Math.max(60, durationSeconds ?? current?.durationSeconds ?? 1500));
-      const liveRemaining = current?.status === "RUNNING" && current.endsAt
-        ? Math.max(0, Math.ceil((current.endsAt.getTime() - now.getTime()) / 1000))
-        : current?.remainingSeconds ?? duration;
-      const startRemaining = durationSeconds === undefined ? (liveRemaining || duration) : duration;
-      const data = action === "start"
-        ? { status: "RUNNING" as const, durationSeconds: duration, remainingSeconds: startRemaining, startedAt: now, endsAt: new Date(now.getTime() + startRemaining * 1000), updatedById: user.id }
-        : action === "pause"
-          ? { status: "PAUSED" as const, remainingSeconds: liveRemaining, startedAt: null, endsAt: null, updatedById: user.id }
-          : { status: "IDLE" as const, durationSeconds: duration, remainingSeconds: duration, startedAt: null, endsAt: null, updatedById: user.id };
-      const pomodoro = await db.pomodoro.upsert({ where: { workspaceId }, create: { workspaceId, ...data }, update: data });
-      io.to(`workspace:${workspaceId}`).emit("pomodoro:update", pomodoro);
+    socket.on("pomodoro:action", async ({ workspaceId, action, durationSeconds }: PomodoroAction, ack?: PomodoroAck) => {
+      try {
+        if (!(await workspaceAccess(workspaceId, user.id))) return ack?.({ error: "Нет доступа к таймеру" });
+        const current = await db.pomodoro.findUnique({ where: { workspaceId } });
+        const now = new Date();
+        const duration = Math.min(3600, Math.max(60, durationSeconds ?? current?.durationSeconds ?? 1500));
+        const phaseDuration = current?.phase === "BREAK" ? current.breakDurationSeconds : duration;
+        const liveRemaining = current?.status === "RUNNING" && current.endsAt
+          ? Math.max(0, Math.ceil((current.endsAt.getTime() - now.getTime()) / 1000))
+          : current?.remainingSeconds ?? phaseDuration;
+        const startRemaining = durationSeconds === undefined ? (liveRemaining || phaseDuration) : duration;
+        const data = action === "start"
+          ? { status: "RUNNING" as const, durationSeconds: duration, remainingSeconds: startRemaining, startedAt: now, endsAt: new Date(now.getTime() + startRemaining * 1000), updatedById: user.id }
+          : action === "pause"
+            ? { status: "PAUSED" as const, remainingSeconds: liveRemaining, startedAt: null, endsAt: null, updatedById: user.id }
+            : { status: "IDLE" as const, phase: "FOCUS" as const, durationSeconds: duration, remainingSeconds: duration, startedAt: null, endsAt: null, updatedById: user.id };
+        const pomodoro = await db.pomodoro.upsert({ where: { workspaceId }, create: { workspaceId, ...data }, update: data });
+        io.to(`workspace:${workspaceId}`).emit("pomodoro:update", pomodoro);
+        ack?.({ pomodoro });
+      } catch (error) {
+        console.error("pomodoro:action failed", error);
+        ack?.({ error: "Не удалось обновить таймер" });
+      }
+    });
+
+    socket.on("pomodoro:complete", async (workspaceId: string, ack?: PomodoroAck) => {
+      try {
+        if (!(await workspaceAccess(workspaceId, user.id))) return ack?.({ error: "Нет доступа к таймеру" });
+        const pomodoro = await completeExpiredPomodoro(io, workspaceId);
+        ack?.({ pomodoro: pomodoro ?? await db.pomodoro.findUnique({ where: { workspaceId } }) });
+      } catch (error) {
+        console.error("pomodoro:complete failed", error);
+        ack?.({ error: "Не удалось завершить интервал" });
+      }
     });
 
     socket.on("disconnecting", () => {
@@ -99,6 +118,27 @@ export function attachRealtime(server: HttpServer) {
     });
   });
   return io;
+}
+
+async function completeExpiredPomodoro(io: Server, workspaceId: string) {
+  const current = await db.pomodoro.findUnique({ where: { workspaceId } });
+  const now = new Date();
+  if (!current || current.status !== "RUNNING" || !current.endsAt || current.endsAt > now) return null;
+
+  const completedPhase = current.phase;
+  const next = completedPhase === "FOCUS"
+    ? { phase: "BREAK" as const, status: "RUNNING" as const, remainingSeconds: current.breakDurationSeconds, startedAt: now, endsAt: new Date(now.getTime() + current.breakDurationSeconds * 1000) }
+    : { phase: "FOCUS" as const, status: "IDLE" as const, remainingSeconds: current.durationSeconds, startedAt: null, endsAt: null };
+  const changed = await db.pomodoro.updateMany({
+    where: { workspaceId, status: "RUNNING", phase: current.phase, endsAt: { lte: now }, updatedAt: current.updatedAt },
+    data: next,
+  });
+  if (!changed.count) return null;
+
+  const pomodoro = await db.pomodoro.findUniqueOrThrow({ where: { workspaceId } });
+  io.to(`workspace:${workspaceId}`).emit("pomodoro:update", pomodoro);
+  io.to(`workspace:${workspaceId}`).emit("pomodoro:completed", { workspaceId, completedPhase, pomodoro });
+  return pomodoro;
 }
 
 function validSelection(value: unknown): value is BoardSelection {

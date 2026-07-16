@@ -23,6 +23,11 @@ enum PomodoroStatus {
   PAUSED
 }
 
+enum PomodoroPhase {
+  FOCUS
+  BREAK
+}
+
 model User {
   id              String                @id @default(uuid())
   email           String                @unique
@@ -111,7 +116,9 @@ model Pomodoro {
   workspaceId      String         @id
   workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   status           PomodoroStatus @default(IDLE)
+  phase            PomodoroPhase  @default(FOCUS)
   durationSeconds  Int            @default(1500)
+  breakDurationSeconds Int         @default(300)
   remainingSeconds Int            @default(1500)
   startedAt        DateTime?
   endsAt           DateTime?

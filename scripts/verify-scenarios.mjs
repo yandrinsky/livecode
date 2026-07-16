@@ -1,9 +1,12 @@
+import "dotenv/config";
+import { PrismaClient } from "@prisma/client";
 import { io } from "socket.io-client";
 
 const API_URL = process.env.API_URL ?? "http://localhost:4000";
 const API = `${API_URL}/api`;
 const runId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 const password = "pairboard-test-123";
+const db = new PrismaClient();
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -234,6 +237,25 @@ try {
   assert(reset.remainingSeconds === 300, "Pomodoro reset не применил длительность");
   checked("общий Pomodoro: start → pause → reset с разных клиентов");
 
+  await emitAck(studentSocket, "pomodoro:action", { workspaceId: workspace.id, action: "start" });
+  await db.pomodoro.update({ where: { workspaceId: workspace.id }, data: { endsAt: new Date(Date.now() - 1000) } });
+  const breakUpdatePromise = waitFor(teacherSocket, "pomodoro:update", (timer) => timer.workspaceId === workspace.id && timer.phase === "BREAK");
+  const focusCompletedPromise = waitFor(teacherSocket, "pomodoro:completed", (event) => event.workspaceId === workspace.id && event.completedPhase === "FOCUS");
+  await emitAck(studentSocket, "pomodoro:complete", workspace.id);
+  const [breakTimer] = await Promise.all([breakUpdatePromise, focusCompletedPromise]);
+  assert(breakTimer.status === "RUNNING" && breakTimer.remainingSeconds === 300, "После фокуса не запустился пятиминутный перерыв");
+  const activityBeforeBreak = await db.boardActivityMinute.count({ where: { userId: student.user.id } });
+  await request(`/boards/${board.id}/activity`, { token: student.token, method: "POST", expected: 204 });
+  const activityAfterBreak = await db.boardActivityMinute.count({ where: { userId: student.user.id } });
+  assert(activityAfterBreak === activityBeforeBreak, "Перерыв ошибочно попал в статистику активности");
+
+  await db.pomodoro.update({ where: { workspaceId: workspace.id }, data: { endsAt: new Date(Date.now() - 1000) } });
+  const focusReadyPromise = waitFor(teacherSocket, "pomodoro:update", (timer) => timer.workspaceId === workspace.id && timer.phase === "FOCUS" && timer.status === "IDLE");
+  await emitAck(studentSocket, "pomodoro:complete", workspace.id);
+  const focusReady = await focusReadyPromise;
+  assert(focusReady.remainingSeconds === 300, "После перерыва не восстановилась длительность фокус-сессии");
+  checked("Pomodoro: фокус → перерыв 5 минут → фокус, перерыв не входит в статистику");
+
   await request(`/boards/${jsBoard.id}`, { token: student.token, method: "DELETE", expected: 204 });
   const finalWorkspace = await request(`/workspaces/${workspace.id}`, { token: teacher.token });
   assert(finalWorkspace.workspace.boards.some((item) => item.id === board.id), "Основная доска потеряна");
@@ -267,4 +289,5 @@ try {
   console.log(`\nВсе сценарии пройдены: ${checks.length}. Workspace: ${workspace.id}, Board: ${board.id}`);
 } finally {
   for (const socket of sockets) socket.disconnect();
+  await db.$disconnect();
 }

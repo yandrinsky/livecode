@@ -85,6 +85,20 @@ body.is-resizing-session * {
 .console pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.editor-pane {
+  overflow: hidden;
+}
+
+.editor-pane > section,
+.editor-pane > div,
+.editor-pane .monaco-editor,
+.editor-pane .monaco-editor .overflow-guard {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .mobile-console-button { display: none; }
