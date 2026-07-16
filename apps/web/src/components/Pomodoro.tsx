@@ -1,20 +1,22 @@
-import { PauseOutlined, PlayCircleFilled, ReloadOutlined } from "@ant-design/icons";
+import { PauseOutlined, PlayCircleFilled, ReloadOutlined, WarningOutlined } from "@ant-design/icons";
 import { Button, InputNumber, Tooltip } from "antd";
-import { useEffect, useMemo, useState } from "react";
-import { liveSocket } from "../socket";
+import { useEffect, useState } from "react";
+import { useLiveSocket } from "../socket";
 import type { Pomodoro as PomodoroType } from "../types";
 
 export function Pomodoro({ workspaceId, initial, compact = false }: { workspaceId: string; initial?: PomodoroType; compact?: boolean }) {
   const [timer, setTimer] = useState<PomodoroType | undefined>(initial);
   const [now, setNow] = useState(Date.now());
-  const socket = useMemo(liveSocket, []);
+  const { socket, status: realtimeStatus, error: realtimeError, retry: retryRealtime } = useLiveSocket();
 
   useEffect(() => {
     const update = (next: PomodoroType) => setTimer(next);
-    socket.emit("workspace:join", workspaceId, (data: { pomodoro?: PomodoroType }) => data.pomodoro && setTimer(data.pomodoro));
+    const joinWorkspace = () => socket.emit("workspace:join", workspaceId, (data: { pomodoro?: PomodoroType }) => data.pomodoro && setTimer(data.pomodoro));
+    joinWorkspace();
+    socket.on("connect", joinWorkspace);
     socket.on("pomodoro:update", update);
     const tick = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => { socket.emit("workspace:leave", workspaceId); socket.off("pomodoro:update", update); window.clearInterval(tick); };
+    return () => { socket.emit("workspace:leave", workspaceId); socket.off("connect", joinWorkspace); socket.off("pomodoro:update", update); window.clearInterval(tick); };
   }, [socket, workspaceId]);
 
   const remaining = timer?.status === "RUNNING" && timer.endsAt
@@ -31,14 +33,15 @@ export function Pomodoro({ workspaceId, initial, compact = false }: { workspaceI
       className="pomodoro__duration"
       min={1} max={60} suffix="мин"
       value={Math.round((timer?.durationSeconds ?? 1500) / 60)}
-      disabled={timer?.status === "RUNNING"}
+      disabled={timer?.status === "RUNNING" || realtimeStatus !== "connected"}
       onChange={(value) => action("reset", Number(value ?? 25) * 60)}
     />}
     <div className="pomodoro__actions">
       {timer?.status === "RUNNING"
-        ? <Tooltip title="Поставить на паузу"><Button shape="circle" icon={<PauseOutlined />} onClick={() => action("pause")} /></Tooltip>
-        : <Button className="pomodoro__start" icon={<PlayCircleFilled />} onClick={() => action("start")}>Старт</Button>}
-      <Tooltip title="Сбросить"><Button type="text" shape="circle" icon={<ReloadOutlined />} onClick={() => action("reset")} /></Tooltip>
+        ? <Tooltip title="Поставить на паузу"><Button shape="circle" disabled={realtimeStatus !== "connected"} icon={<PauseOutlined />} onClick={() => action("pause")} /></Tooltip>
+        : <Button className="pomodoro__start" disabled={realtimeStatus !== "connected"} icon={<PlayCircleFilled />} onClick={() => action("start")}>Старт</Button>}
+      <Tooltip title="Сбросить"><Button type="text" shape="circle" disabled={realtimeStatus !== "connected"} icon={<ReloadOutlined />} onClick={() => action("reset")} /></Tooltip>
     </div>
+    {!compact && realtimeStatus === "error" && <div className="pomodoro__connection-error" role="alert"><WarningOutlined /><span><b>Нет realtime-соединения</b><small>{realtimeError}</small></span><Button type="text" size="small" onClick={retryRealtime}>Повторить</Button></div>}
   </div>;
 }

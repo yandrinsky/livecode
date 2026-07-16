@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { DataLoadError } from "../components/DataLoadError";
 import type { Workspace } from "../types";
 
 dayjs.locale("ru");
@@ -15,8 +16,17 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
-  const load = () => api<{ workspaces: Workspace[] }>("/workspaces").then((r) => setWorkspaces(r.workspaces));
-  useEffect(() => { void load(); }, []);
+  const [loadError, setLoadError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setWorkspaces(null);
+    setLoadError("");
+    api<{ workspaces: Workspace[] }>("/workspaces")
+      .then((result) => { if (active) setWorkspaces(result.workspaces); })
+      .catch((reason: unknown) => { if (active) setLoadError(reason instanceof Error ? reason.message : "Не удалось загрузить пространства"); });
+    return () => { active = false; };
+  }, [loadAttempt]);
   const create = async ({ name }: { name: string }) => {
     try { const { workspace } = await api<{ workspace: Workspace }>("/workspaces", { method: "POST", body: JSON.stringify({ name }) }); navigate(`/workspace/${workspace.id}`); }
     catch (error) { message.error(error instanceof Error ? error.message : "Не удалось создать пространство"); }
@@ -31,13 +41,12 @@ export function DashboardPage() {
     </section>
     <div className="section-heading"><div><span>01</span><h2>Рабочие пространства</h2></div><small>Обновлены недавно</small></div>
     <section className="workspace-grid">
-      {!workspaces ? [...Array(3)].map((_, i) => <Skeleton key={i} active />) : workspaces.map((workspace, index) => <Link className="workspace-card" to={`/workspace/${workspace.id}`} key={workspace.id} style={{ animationDelay: `${index * 70}ms` }}>
+      {loadError ? <DataLoadError message={loadError} onRetry={() => setLoadAttempt((attempt) => attempt + 1)} /> : !workspaces ? [...Array(3)].map((_, i) => <Skeleton key={i} active />) : <>{workspaces.map((workspace, index) => <Link className="workspace-card" to={`/workspace/${workspace.id}`} key={workspace.id} style={{ animationDelay: `${index * 70}ms` }}>
         <div className="workspace-card__top"><span className="card-number">/{String(index + 1).padStart(2, "0")}</span><span className="workspace-card__role">{workspace.ownerId === user?.id ? "ВЛАДЕЛЕЦ" : "УЧАСТНИК"}</span></div>
         <h3>{workspace.name}</h3><p>{workspace.ownerId === user?.id ? "Ваше пространство для практики" : `Пространство · ${workspace.owner.displayName}`}</p>
         <div className="workspace-card__meta"><span><b>{workspace._count?.boards ?? 0}</b> задач</span><span><TeamOutlined /> {(workspace._count?.members ?? 0)} участников</span></div>
         <footer><span>Изменено {dayjs(workspace.updatedAt).format("D MMM · HH:mm")}</span><ArrowRightOutlined /></footer>
-      </Link>)}
-      <button className="workspace-card workspace-card--new" onClick={() => setParams({ create: "1" })}><PlusOutlined /><b>Создать пространство</b><span>Отдельное место для курса, темы или ученика</span></button>
+      </Link>)}<button className="workspace-card workspace-card--new" onClick={() => setParams({ create: "1" })}><PlusOutlined /><b>Создать пространство</b><span>Отдельное место для курса, темы или ученика</span></button></>}
     </section>
     <Modal title="Новое рабочее пространство" open={params.get("create") === "1"} onCancel={() => setParams({})} footer={null} destroyOnHidden>
       <Form layout="vertical" onFinish={create}><Form.Item label="Название" name="name" rules={[{ required: true, min: 2 }]}><Input autoFocus size="large" placeholder="Например, Алгоритмы · осень" /></Form.Item><Button block type="primary" size="large" htmlType="submit">Создать</Button></Form>

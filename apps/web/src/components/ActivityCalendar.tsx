@@ -4,6 +4,7 @@ import dayjs from "dayjs";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { DataLoadError } from "./DataLoadError";
 import type { ActivityDay, Workspace } from "../types";
 
 const formatDuration = (seconds: number) => {
@@ -15,12 +16,16 @@ const formatDuration = (seconds: number) => {
 export function ActivityCalendar({ workspace }: { workspace: Workspace }) {
   const [userId, setUserId] = useState(workspace.ownerId);
   const [days, setDays] = useState<ActivityDay[] | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const end = useMemo(() => dayjs().startOf("day"), []);
   const start = useMemo(() => end.subtract(364, "day"), [end]);
 
   useEffect(() => {
+    let active = true;
     setDays(null);
+    setLoadError("");
     setSelectedDate(null);
     const params = new URLSearchParams({
       userId,
@@ -29,8 +34,10 @@ export function ActivityCalendar({ workspace }: { workspace: Workspace }) {
       timezoneOffset: String(new Date().getTimezoneOffset()),
     });
     api<{ days: ActivityDay[] }>(`/workspaces/${workspace.id}/activity?${params}`)
-      .then((result) => setDays(result.days));
-  }, [workspace.id, userId, start, end]);
+      .then((result) => { if (active) setDays(result.days); })
+      .catch((reason: unknown) => { if (active) setLoadError(reason instanceof Error ? reason.message : "Не удалось загрузить активность"); });
+    return () => { active = false; };
+  }, [workspace.id, userId, start, end, loadAttempt]);
 
   const dayMap = useMemo(() => new Map(days?.map((day) => [day.date, day]) ?? []), [days]);
   const cells = useMemo(() => {
@@ -53,7 +60,7 @@ export function ActivityCalendar({ workspace }: { workspace: Workspace }) {
         options={workspace.members?.map(({ user }) => ({ value: user.id, label: user.displayName }))}
       />
     </header>
-    {!days ? <Skeleton active paragraph={{ rows: 4 }} /> : <>
+    {loadError ? <DataLoadError compact message={loadError} onRetry={() => setLoadAttempt((attempt) => attempt + 1)} /> : !days ? <Skeleton active paragraph={{ rows: 4 }} /> : <>
       <div className="activity-calendar-scroll">
         <div className="activity-calendar" aria-label="Календарь учебной активности">
           {cells.map((date) => {

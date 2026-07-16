@@ -7,15 +7,18 @@ export function InvitePage() {
   const { token = "" } = useParams(); const navigate = useNavigate();
   const [invite, setInvite] = useState<{ workspace: { name: string }; createdBy: { displayName: string }; expiresAt: string } | null>(null);
   const [error, setError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [accepting, setAccepting] = useState(false);
   useEffect(() => {
     let active = true;
+    setInvite(null);
+    setError("");
     api<{ invite: NonNullable<typeof invite> }>(`/invites/${token}`)
       .then((result) => { if (active) setInvite(result.invite); })
       .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Приглашение недействительно"); });
     return () => { active = false; };
-  }, [token]);
-  if (error) return <Result status="warning" title="Ссылка больше не действует" subTitle={error} extra={<Button size="large" onClick={() => navigate("/")}>Вернуться в кабинет</Button>} />;
+  }, [token, loadAttempt]);
+  if (error) return <Result status="warning" title="Не удалось проверить приглашение" subTitle={error} extra={[<Button type="primary" size="large" key="retry" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>Повторить</Button>, <Button size="large" key="home" onClick={() => navigate("/")}>Вернуться в кабинет</Button>]} />;
   if (!invite) return <div className="page-loading"><Skeleton active /></div>;
   const accept = async () => {
     setAccepting(true);
