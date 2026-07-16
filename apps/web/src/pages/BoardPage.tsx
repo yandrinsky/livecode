@@ -256,15 +256,13 @@ export function BoardPage() {
     const js = ts.transpile(code, { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, allowJs: true });
     const workerSource = `const exports = {}; const module = { exports }; const logs = []; console.log = (...args) => postMessage({type:'log', value:args.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ')}); try { ${js}\n postMessage({type:'done'}); } catch (error) { postMessage({type:'error', value:error.stack || error.message}); }`;
     const blob = new Blob([workerSource], { type: "text/javascript" });
-    const workerUrl = URL.createObjectURL(blob);
-    const worker = new Worker(workerUrl);
+    const worker = new Worker(URL.createObjectURL(blob));
     const result: string[] = [];
-    const stopWorker = () => { worker.terminate(); URL.revokeObjectURL(workerUrl); };
-    const timeout = window.setTimeout(() => { stopWorker(); setOutput([...result, "■ Выполнение остановлено: лимит 30 секунд"]); setRunning(false); }, 30_000);
+    const timeout = window.setTimeout(() => { worker.terminate(); setOutput([...result, "■ Выполнение остановлено: лимит 2 секунды"]); setRunning(false); }, 2000);
     worker.onmessage = (event) => {
       if (event.data.type === "log") { result.push(event.data.value); setOutput([...result]); }
-      if (event.data.type === "error") { window.clearTimeout(timeout); result.push(`Ошибка: ${event.data.value}`); setOutput([...result]); setRunning(false); stopWorker(); }
-      if (event.data.type === "done") { window.clearTimeout(timeout); setOutput(result.length ? result : ["✓ Выполнено без вывода"]); setRunning(false); stopWorker(); }
+      if (event.data.type === "error") { window.clearTimeout(timeout); result.push(`Ошибка: ${event.data.value}`); setOutput([...result]); setRunning(false); worker.terminate(); }
+      if (event.data.type === "done") { window.clearTimeout(timeout); setOutput(result.length ? result : ["✓ Выполнено без вывода"]); setRunning(false); worker.terminate(); }
     };
   }, [code, running]);
 
