@@ -111,7 +111,7 @@ routes.post("/boards/:boardId/activity", asyncRoute(async (req, res) => {
   const board = await boardAccess(req.params.boardId, req.user.id);
   if (!board) return res.status(404).json({ message: "Доска не найдена" });
   const pomodoro = await db.pomodoro.findUnique({ where: { workspaceId: board.workspaceId } });
-  if (pomodoro?.status !== "RUNNING" || !pomodoro.endsAt || pomodoro.endsAt <= new Date()) {
+  if (pomodoro?.status !== "RUNNING" || pomodoro.phase !== "FOCUS" || !pomodoro.endsAt || pomodoro.endsAt <= new Date()) {
     return res.status(204).end();
   }
   const minute = new Date();

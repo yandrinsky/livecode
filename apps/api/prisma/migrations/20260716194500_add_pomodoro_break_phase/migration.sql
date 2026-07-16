@@ -1,0 +1,5 @@
+CREATE TYPE "PomodoroPhase" AS ENUM ('FOCUS', 'BREAK');
+
+ALTER TABLE "Pomodoro"
+ADD COLUMN "phase" "PomodoroPhase" NOT NULL DEFAULT 'FOCUS',
+ADD COLUMN "breakDurationSeconds" INTEGER NOT NULL DEFAULT 300;
