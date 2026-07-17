@@ -206,6 +206,15 @@ try {
   assert(persisted.board.content === collaborativeCode, "Realtime-код не сохранился в PostgreSQL");
   checked("совместное изменение кода, broadcast, версия и persistence");
 
+  const codeSearch = await request(`/workspaces/${workspace.id}/boards/search?q=${encodeURIComponent(runId)}`, { token: teacher.token });
+  const codeMatch = codeSearch.results.find((item) => item.id === board.id);
+  assert(codeMatch?.matchedField === "content", "Поиск не нашёл уникальную строку в коде");
+  assert(codeMatch.lineNumber === 5 && codeMatch.occurrences === 1, "Поиск вернул неверную строку или число совпадений");
+  const titleSearch = await request(`/workspaces/${workspace.id}/boards/search?q=${encodeURIComponent("board renamed")}`, { token: student.token });
+  assert(titleSearch.results[0]?.id === board.id && titleSearch.results[0]?.matchedField === "title", "Поиск по названию не поднял доску в выдаче");
+  await request(`/workspaces/${workspace.id}/boards/search?q=reduce`, { token: outsider.token, expected: 404 });
+  checked("индексированный поиск по названию/коду и изоляция workspace");
+
   const selection = { startLineNumber: 1, startColumn: 8, endLineNumber: 1, endColumn: 16 };
   const remoteSelection = waitFor(teacherSocket, "board:selection", (event) =>
     event.boardId === board.id && event.user.id === student.user.id && event.selection.endColumn === selection.endColumn

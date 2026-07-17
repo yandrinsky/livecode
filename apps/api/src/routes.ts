@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
@@ -80,6 +81,89 @@ routes.get("/workspaces/:workspaceId", asyncRoute(async (req, res) => {
     },
   });
   res.json({ workspace });
+}));
+
+routes.get("/workspaces/:workspaceId/boards/search", asyncRoute(async (req, res) => {
+  const access = await workspaceAccess(req.params.workspaceId, req.user.id);
+  if (!access) return res.status(404).json({ message: "Рабочее пространство не найдено" });
+  const query = z.object({
+    q: z.string().trim().min(2).max(120),
+    limit: z.coerce.number().int().min(1).max(30).default(20),
+  }).parse(req.query);
+  const normalizedQuery = query.q.toLowerCase();
+  const escapedQuery = normalizedQuery.replace(/[\\%_]/g, "\\$&");
+  const pattern = `%${escapedQuery}%`;
+  type SearchRow = {
+    id: string;
+    title: string;
+    groupName: string | null;
+    language: "TYPESCRIPT" | "JAVASCRIPT";
+    updatedAt: Date;
+    matchedField: "title" | "description" | "groupName" | "content";
+    snippet: string;
+    lineNumber: number | null;
+    occurrences: number;
+  };
+  const results = await db.$queryRaw<SearchRow[]>(Prisma.sql`
+    WITH candidates AS (
+      SELECT
+        board.*,
+        lower(board."title" || ' ' || board."description" || ' ' || COALESCE(board."groupName", '') || ' ' || board."content") AS search_document,
+        strpos(lower(board."title"), ${normalizedQuery}) AS title_position,
+        strpos(lower(COALESCE(board."groupName", '')), ${normalizedQuery}) AS group_position,
+        strpos(lower(board."description"), ${normalizedQuery}) AS description_position,
+        strpos(lower(board."content"), ${normalizedQuery}) AS content_position
+      FROM "Board" AS board
+      WHERE board."workspaceId" = ${access.id}
+        AND lower(board."title" || ' ' || board."description" || ' ' || COALESCE(board."groupName", '') || ' ' || board."content") LIKE ${pattern} ESCAPE '\\'
+    )
+    SELECT
+      id,
+      title,
+      "groupName",
+      language,
+      "updatedAt",
+      CASE
+        WHEN title_position > 0 THEN 'title'
+        WHEN group_position > 0 THEN 'groupName'
+        WHEN description_position > 0 THEN 'description'
+        ELSE 'content'
+      END AS "matchedField",
+      CASE
+        WHEN title_position > 0 THEN title
+        WHEN group_position > 0 THEN "groupName"
+        WHEN description_position > 0 THEN
+          (CASE WHEN description_position > 61 THEN '…' ELSE '' END) ||
+          replace(replace(substring(description FROM greatest(description_position - 60, 1) FOR 180), E'\\n', ' '), E'\\r', ' ') ||
+          (CASE WHEN char_length(description) > description_position + 119 THEN '…' ELSE '' END)
+        ELSE
+          (CASE WHEN content_position > 61 THEN '…' ELSE '' END) ||
+          replace(replace(substring(content FROM greatest(content_position - 60, 1) FOR 180), E'\\n', ' '), E'\\r', ' ') ||
+          (CASE WHEN char_length(content) > content_position + 119 THEN '…' ELSE '' END)
+      END AS snippet,
+      CASE
+        WHEN content_position > 0 THEN
+          1 + char_length(substring(content FROM 1 FOR content_position - 1))
+            - char_length(replace(substring(content FROM 1 FOR content_position - 1), E'\\n', ''))
+        ELSE NULL
+      END AS "lineNumber",
+      greatest(
+        1,
+        (char_length(search_document) - char_length(replace(search_document, ${normalizedQuery}, '')))
+          / char_length(${normalizedQuery})
+      ) AS occurrences
+    FROM candidates
+    ORDER BY
+      CASE
+        WHEN title_position > 0 THEN 0
+        WHEN group_position > 0 THEN 1
+        WHEN description_position > 0 THEN 2
+        ELSE 3
+      END,
+      "updatedAt" DESC
+    LIMIT ${query.limit}
+  `);
+  res.json({ results, query: query.q });
 }));
 
 routes.post("/workspaces/:workspaceId/boards", asyncRoute(async (req, res) => {

@@ -1,6 +1,6 @@
-import { AppstoreOutlined, ArrowLeftOutlined, CheckCircleFilled, CodeOutlined, DownOutlined, HomeOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlayCircleFilled, ReloadOutlined, SaveOutlined, StopOutlined, TeamOutlined, UpOutlined, WarningOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, ArrowLeftOutlined, CheckCircleFilled, CodeOutlined, DownOutlined, HomeOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlayCircleFilled, ReloadOutlined, SaveOutlined, SearchOutlined, StopOutlined, TeamOutlined, UpOutlined, WarningOutlined } from "@ant-design/icons";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { Avatar, Button, Drawer, Skeleton, Tag, Tooltip } from "antd";
+import { Avatar, Button, Drawer, Input, Skeleton, Spin, Tag, Tooltip } from "antd";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import ts from "typescript";
@@ -8,7 +8,7 @@ import { ApiError, api } from "../api";
 import { createCodeWorkerSource } from "../codeRunner";
 import { Pomodoro } from "../components/Pomodoro";
 import { useLiveSocket } from "../socket";
-import type { Board, User, Workspace } from "../types";
+import type { Board, BoardSearchResult, User, Workspace } from "../types";
 
 type EditorInstance = Parameters<OnMount>[0];
 type MonacoInstance = Parameters<OnMount>[1];
@@ -39,6 +39,13 @@ function colorIndex(id: string) {
   return [...id].reduce((hash, char) => ((hash * 31) + char.charCodeAt(0)) | 0, 0) >>> 0;
 }
 
+function searchMatchLabel(result: BoardSearchResult) {
+  if (result.matchedField === "content") return result.lineNumber ? `КОД · СТРОКА ${result.lineNumber}` : "КОД";
+  if (result.matchedField === "description") return "УСЛОВИЕ";
+  if (result.matchedField === "groupName") return "ГРУППА";
+  return "НАЗВАНИЕ";
+}
+
 export function BoardPage() {
   const { workspaceId = "", boardId = "" } = useParams();
   const { socket, status: realtimeStatus, error: realtimeError, retry: retryRealtime } = useLiveSocket();
@@ -54,6 +61,12 @@ export function BoardPage() {
   const [mobileConsoleOpen, setMobileConsoleOpen] = useState(false);
   const [descriptionOpen, setDescriptionOpen] = useState(true);
   const [taskSidebarOpen, setTaskSidebarOpen] = useState(storedTaskSidebarOpen);
+  const [taskSearchOpen, setTaskSearchOpen] = useState(false);
+  const [taskSearchQuery, setTaskSearchQuery] = useState("");
+  const [taskSearchResults, setTaskSearchResults] = useState<BoardSearchResult[]>([]);
+  const [taskSearchLoading, setTaskSearchLoading] = useState(false);
+  const [taskSearchError, setTaskSearchError] = useState<string | null>(null);
+  const [taskSearchAttempt, setTaskSearchAttempt] = useState(0);
   const [sessionWidth, setSessionWidth] = useState(storedSessionWidth);
   const [resizingSession, setResizingSession] = useState(false);
   const remote = useRef(false);
@@ -95,6 +108,36 @@ export function BoardPage() {
   }, [workspaceId, boardId, loadAttempt]);
 
   useEffect(() => { setWorkspaceBoards([]); }, [workspaceId]);
+
+  useEffect(() => {
+    const query = taskSearchQuery.trim();
+    if (!taskSearchOpen || query.length < 2) {
+      setTaskSearchLoading(false);
+      setTaskSearchResults([]);
+      setTaskSearchError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setTaskSearchLoading(true);
+    setTaskSearchResults([]);
+    setTaskSearchError(null);
+    const debounce = window.setTimeout(() => {
+      void api<{ results: BoardSearchResult[] }>(`/workspaces/${workspaceId}/boards/search?q=${encodeURIComponent(query)}&limit=20`, { signal: controller.signal })
+        .then(({ results }) => {
+          if (!controller.signal.aborted) setTaskSearchResults(results);
+        })
+        .catch((reason: unknown) => {
+          if (!controller.signal.aborted) setTaskSearchError(reason instanceof Error ? reason.message : "Не удалось выполнить поиск");
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setTaskSearchLoading(false);
+        });
+    }, 280);
+    return () => {
+      window.clearTimeout(debounce);
+      controller.abort();
+    };
+  }, [taskSearchOpen, taskSearchQuery, taskSearchAttempt, workspaceId]);
 
   useEffect(() => {
     const reportActivity = () => {
@@ -353,11 +396,26 @@ export function BoardPage() {
   }, [run]);
 
   const toggleTaskSidebar = () => {
-    setTaskSidebarOpen((open) => {
-      const next = !open;
-      localStorage.setItem(TASK_SIDEBAR_KEY, String(next));
-      return next;
-    });
+    const next = !taskSidebarOpen;
+    setTaskSidebarOpen(next);
+    localStorage.setItem(TASK_SIDEBAR_KEY, String(next));
+    if (!next) {
+      setTaskSearchOpen(false);
+      setTaskSearchQuery("");
+    }
+  };
+
+  const toggleTaskSearch = () => {
+    if (taskSearchOpen) {
+      setTaskSearchOpen(false);
+      setTaskSearchQuery("");
+      return;
+    }
+    if (!taskSidebarOpen) {
+      setTaskSidebarOpen(true);
+      localStorage.setItem(TASK_SIDEBAR_KEY, "true");
+    }
+    setTaskSearchOpen(true);
   };
 
   if (loadError) {
@@ -383,6 +441,7 @@ export function BoardPage() {
   }
   if (!board || board.id !== boardId) return <div className="board-loading"><Skeleton active paragraph={{ rows: 12 }} /></div>;
   const navigationBoards = workspaceBoards.length ? workspaceBoards : [board];
+  const normalizedTaskSearch = taskSearchQuery.trim();
   return <div className="board-room">
     <header className="board-toolbar">
       <Link to={`/workspace/${workspaceId}`} className="board-toolbar__back"><ArrowLeftOutlined /></Link>
@@ -393,11 +452,28 @@ export function BoardPage() {
       <Button className="mobile-console-button" icon={<CodeOutlined />} aria-label="Открыть консоль вывода" onClick={() => setMobileConsoleOpen(true)}><span>Вывод</span></Button>
       <Button className={`run-button ${running ? "run-button--stop" : ""}`} type={running ? "default" : "primary"} danger={running} icon={running ? <StopOutlined /> : <PlayCircleFilled />} onClick={running ? stopRun : run} title={running ? "Остановить выполнение" : "Ctrl + Enter"}>{running ? "Остановить" : "Запустить"}</Button>
     </header>
-    <div className={`board-workspace-shell ${taskSidebarOpen ? "board-workspace-shell--sidebar-open" : "board-workspace-shell--sidebar-collapsed"}`}>
+    <div className={`board-workspace-shell ${taskSidebarOpen ? "board-workspace-shell--sidebar-open" : "board-workspace-shell--sidebar-collapsed"} ${taskSidebarOpen && taskSearchOpen ? "board-workspace-shell--searching" : ""}`}>
       {taskSidebarOpen && <button className="board-task-nav__scrim" type="button" aria-label="Закрыть список задач" onClick={toggleTaskSidebar} />}
       <aside className="board-task-nav" aria-label="Задачи рабочего пространства">
-        <header><div><span>WORKSPACE</span><b>Задачи</b><small>{navigationBoards.length}</small></div><button type="button" aria-label={taskSidebarOpen ? "Свернуть список задач" : "Развернуть список задач"} aria-expanded={taskSidebarOpen} onClick={toggleTaskSidebar}>{taskSidebarOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}</button></header>
-        <nav>{navigationBoards.map((item) => <div className={`board-task-nav__row ${item.id === boardId ? "is-active" : ""}`} key={item.id}>
+        <header>
+          <div className="board-task-nav__heading"><span>WORKSPACE</span><b>{taskSearchOpen ? "Поиск" : "Задачи"}</b><small>{taskSearchOpen && normalizedTaskSearch.length >= 2 && !taskSearchLoading ? taskSearchResults.length : navigationBoards.length}</small></div>
+          <div className="board-task-nav__actions">
+            {taskSidebarOpen && <button className={taskSearchOpen ? "is-active" : ""} type="button" aria-label={taskSearchOpen ? "Закрыть поиск по задачам" : "Поиск по задачам"} aria-pressed={taskSearchOpen} title={taskSearchOpen ? "Закрыть поиск" : "Поиск по задачам"} onClick={toggleTaskSearch}><SearchOutlined /></button>}
+            <button type="button" aria-label={taskSidebarOpen ? "Свернуть список задач" : "Развернуть список задач"} aria-expanded={taskSidebarOpen} onClick={toggleTaskSidebar}>{taskSidebarOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}</button>
+          </div>
+        </header>
+        {taskSearchOpen && <div className="board-task-search"><Input autoFocus allowClear value={taskSearchQuery} prefix={<SearchOutlined />} placeholder="Код, условие, название..." aria-label="Строка поиска по всем задачам" onChange={(event) => setTaskSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") toggleTaskSearch(); }} /></div>}
+        <nav aria-live={taskSearchOpen ? "polite" : undefined}>{taskSearchOpen ? <>
+          {normalizedTaskSearch.length < 2 && <div className="board-task-search__state"><SearchOutlined /><b>Поиск по всему workspace</b><span>Введите минимум 2 символа. Ищем в коде, условиях, названиях и группах.</span></div>}
+          {normalizedTaskSearch.length >= 2 && taskSearchLoading && <div className="board-task-search__state"><Spin size="small" /><b>Ищем совпадения</b><span>Запрос выполняется по серверному индексу.</span></div>}
+          {normalizedTaskSearch.length >= 2 && !taskSearchLoading && taskSearchError && <div className="board-task-search__state board-task-search__state--error"><WarningOutlined /><b>Поиск недоступен</b><span>{taskSearchError}</span><Button size="small" icon={<ReloadOutlined />} onClick={() => setTaskSearchAttempt((attempt) => attempt + 1)}>Повторить</Button></div>}
+          {normalizedTaskSearch.length >= 2 && !taskSearchLoading && !taskSearchError && taskSearchResults.length === 0 && <div className="board-task-search__state"><SearchOutlined /><b>Совпадений нет</b><span>Попробуйте другую строку или более короткий фрагмент кода.</span></div>}
+          {!taskSearchLoading && !taskSearchError && taskSearchResults.map((result) => <Link className={`board-task-search__result ${result.id === boardId ? "is-active" : ""}`} to={`/workspace/${workspaceId}/board/${result.id}`} key={result.id} onClick={() => { if (window.innerWidth <= 760) { setTaskSidebarOpen(false); setTaskSearchOpen(false); setTaskSearchQuery(""); } }}>
+            <span className="board-task-search__result-head"><i>{result.language === "TYPESCRIPT" ? "TS" : "JS"}</i><b>{result.title}</b><small>{result.occurrences > 1 ? `${result.occurrences} совп.` : "1 совп."}</small></span>
+            <em>{searchMatchLabel(result)}</em>
+            <code>{result.snippet}</code>
+          </Link>)}
+        </> : navigationBoards.map((item) => <div className={`board-task-nav__row ${item.id === boardId ? "is-active" : ""}`} key={item.id}>
           <Link className="board-task-nav__item" to={`/workspace/${workspaceId}/board/${item.id}`} title={item.title} aria-label={`Открыть задачу «${item.title}»`} aria-current={item.id === boardId ? "page" : undefined} onClick={() => { if (window.innerWidth <= 760) setTaskSidebarOpen(false); }}>
             <span className="board-task-nav__language">{item.language === "TYPESCRIPT" ? "TS" : "JS"}</span>
             <span className="board-task-nav__copy"><b>{item.title}</b><small>{item.groupName ?? "Без группы"}</small></span>
