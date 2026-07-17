@@ -15,8 +15,9 @@
     "@monaco-editor/react": "^4.7.0",
     "antd": "^5.26.3",
     "dayjs": "^1.11.13",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "esbuild-wasm": "0.28.1",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
     "react-router-dom": "^7.6.3",
     "socket.io-client": "^4.8.1",
     "typescript": "^5.8.3"

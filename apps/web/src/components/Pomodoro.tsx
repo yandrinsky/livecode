@@ -88,7 +88,7 @@ export function Pomodoro({ workspaceId, initial, compact = false }: { workspaceI
       <div className="pomodoro__time">{minutes}<i>:</i>{seconds}</div>
       {!compact && <InputNumber
         className="pomodoro__duration"
-        min={1} max={60} suffix="мин"
+        min={1} max={60} controls={false} suffix="мин"
         value={Math.round((timer?.durationSeconds ?? 1500) / 60)}
         disabled={timer?.status === "RUNNING" || controlsDisabled}
         onChange={(value) => action("reset", Number(value ?? 25) * 60)}

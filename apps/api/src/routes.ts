@@ -97,6 +97,7 @@ routes.get("/workspaces/:workspaceId/boards/search", asyncRoute(async (req, res)
     id: string;
     title: string;
     groupName: string | null;
+    kind: "CODE" | "REACT";
     language: "TYPESCRIPT" | "JAVASCRIPT";
     updatedAt: Date;
     matchedField: "title" | "description" | "groupName" | "content";
@@ -121,6 +122,7 @@ routes.get("/workspaces/:workspaceId/boards/search", asyncRoute(async (req, res)
       id,
       title,
       "groupName",
+      kind,
       language,
       "updatedAt",
       CASE
@@ -173,11 +175,14 @@ routes.post("/workspaces/:workspaceId/boards", asyncRoute(async (req, res) => {
     title: z.string().trim().min(2).max(100),
     description: z.string().max(1000).default(""),
     groupName: z.string().trim().max(50).nullable().optional(),
+    kind: z.enum(["CODE", "REACT"]).default("CODE"),
     language: z.enum(["TYPESCRIPT", "JAVASCRIPT"]).default("TYPESCRIPT"),
   }).parse(req.body);
-  const starter = data.language === "TYPESCRIPT"
-    ? "type Result = { value: number };\n\nexport function solve(input: number[]): Result {\n  // Начните решение здесь\n  return { value: 0 };\n}\n"
-    : "export function solve(input) {\n  // Начните решение здесь\n  return { value: 0 };\n}\n";
+  const starter = data.kind === "REACT"
+    ? reactStarter(data.language)
+    : data.language === "TYPESCRIPT"
+      ? "type Result = { value: number };\n\nexport function solve(input: number[]): Result {\n  // Начните решение здесь\n  return { value: 0 };\n}\n"
+      : "export function solve(input) {\n  // Начните решение здесь\n  return { value: 0 };\n}\n";
   const board = await db.board.create({ data: { ...data, groupName: data.groupName || null, content: starter, workspaceId: access.id, createdById: req.user.id } });
   res.status(201).json({ board });
 }));
@@ -257,10 +262,40 @@ routes.patch("/boards/:boardId", asyncRoute(async (req, res) => {
     title: z.string().trim().min(2).max(100).optional(),
     description: z.string().max(1000).optional(),
     groupName: z.string().trim().max(50).nullable().optional(),
+    kind: z.enum(["CODE", "REACT"]).optional(),
     language: z.enum(["TYPESCRIPT", "JAVASCRIPT"]).optional(),
   }).parse(req.body);
   res.json({ board: await db.board.update({ where: { id: board.id }, data: { ...data, groupName: data.groupName || null } }) });
 }));
+
+function reactStarter(language: "TYPESCRIPT" | "JAVASCRIPT") {
+  const typed = language === "TYPESCRIPT";
+  const extension = typed ? "tsx" : "jsx";
+  return JSON.stringify({
+    format: "pairboard-react-project",
+    version: 1,
+    runtime: "react@19.1.0",
+    entry: `/src/main.${extension}`,
+    files: [
+      {
+        path: `/src/main.${extension}`,
+        content: `import { StrictMode } from "react";\nimport { createRoot } from "react-dom/client";\nimport App from "./App";\nimport "./styles.css";\n\ncreateRoot(document.getElementById("root")${typed ? "!" : ""}).render(\n  <StrictMode>\n    <App />\n  </StrictMode>,\n);\n`,
+      },
+      {
+        path: `/src/App.${extension}`,
+        content: `import { useState } from "react";\nimport styles from "./App.module.css";\n\nexport default function App() {\n  const [count, setCount] = useState(0);\n\n  return (\n    <main className={styles.card}>\n      <span>PAIRBOARD · REACT 19</span>\n      <h1>Живой интерфейс</h1>\n      <p>Измените компонент — затем нажмите «Запустить».</p>\n      <button onClick={() => setCount((value) => value + 1)}>\n        Нажатий: {count}\n      </button>\n    </main>\n  );\n}\n`,
+      },
+      {
+        path: "/src/App.module.css",
+        content: `.card {\n  width: min(440px, calc(100% - 32px));\n  margin: 48px auto;\n  padding: 32px;\n  border: 1px solid #d9e2d3;\n  border-radius: 18px;\n  background: #ffffff;\n  box-shadow: 0 24px 60px rgba(25, 40, 20, 0.12);\n}\n\n.card span { color: #477d32; font: 700 11px/1.4 monospace; letter-spacing: 0.12em; }\n.card h1 { margin: 12px 0 8px; font-size: 38px; letter-spacing: -0.04em; }\n.card p { color: #586154; }\n.card button { margin-top: 18px; padding: 11px 16px; border: 0; border-radius: 8px; background: #172111; color: #baff8c; cursor: pointer; }\n`,
+      },
+      {
+        path: "/src/styles.css",
+        content: `* { box-sizing: border-box; }\nbody { margin: 0; min-height: 100vh; background: #f1f5ed; color: #172111; font-family: system-ui, sans-serif; }\nbutton, input { font: inherit; }\n`,
+      },
+    ],
+  });
+}
 
 routes.delete("/boards/:boardId", asyncRoute(async (req, res) => {
   const board = await db.board.findFirst({ where: { id: req.params.boardId, workspace: { ownerId: req.user.id } } });

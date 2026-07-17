@@ -216,8 +216,10 @@ DATABASE_URL='postgresql://pairboard:pairboard@localhost:5432/pairboard?schema=p
 
 ### Monaco и запуск кода
 
-- Поддерживаются только `typescript` и `javascript`.
-- Пользовательский код запускается только в браузерном Web Worker.
+- Обычные доски поддерживают `typescript` и `javascript`. React-доски дополнительно поддерживают многофайловые `ts/tsx` или `js/jsx`, обычный CSS и `.module.css`.
+- React runtime зафиксирован на 19.1.0, пользовательские пакеты и сторонние bare-imports не поддерживаются.
+- Код обычных алгоритмических досок запускается только в браузерном Web Worker.
+- React UI собирается локальным `esbuild-wasm` и исполняется в sandboxed iframe без `allow-same-origin`; консоль передаётся родителю через `postMessage`.
 - Жёсткого лимита времени нет; выполняющийся Web Worker пользователь может остановить вручную.
 - Вывод собирается через перехваченные `console.log/info/warn/error` и `console.time/timeLog/timeEnd`.
 - Не запускайте пользовательский код через `eval`, `Function` или `child_process` внутри основного API.

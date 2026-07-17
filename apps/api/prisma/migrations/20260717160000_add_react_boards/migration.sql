@@ -1,0 +1,4 @@
+CREATE TYPE "BoardKind" AS ENUM ('CODE', 'REACT');
+
+ALTER TABLE "Board"
+ADD COLUMN "kind" "BoardKind" NOT NULL DEFAULT 'CODE';

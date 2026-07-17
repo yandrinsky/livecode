@@ -2,7 +2,9 @@
   "name": "pairboard",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["apps/*"],
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "dev": "concurrently -n api,web -c cyan,green \"npm run dev -w @pairboard/api\" \"npm run dev -w @pairboard/web\"",
     "build": "npm run build -w @pairboard/api && npm run build -w @pairboard/web",
@@ -17,5 +19,15 @@
     "concurrently": "^9.1.2",
     "dotenv-cli": "^8.0.0"
   },
-  "engines": { "node": ">=20" }
+  "overrides": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  }
 }

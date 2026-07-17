@@ -7,6 +7,7 @@ import ts from "typescript";
 import { ApiError, api } from "../api";
 import { createCodeWorkerSource } from "../codeRunner";
 import { Pomodoro } from "../components/Pomodoro";
+import { ReactBoardWorkspace, type ReactBoardWorkspaceHandle } from "../components/ReactBoardWorkspace";
 import { useLiveSocket } from "../socket";
 import type { Board, BoardSearchResult, User, Workspace } from "../types";
 
@@ -14,7 +15,7 @@ type EditorInstance = Parameters<OnMount>[0];
 type MonacoInstance = Parameters<OnMount>[1];
 type DecorationCollection = ReturnType<EditorInstance["createDecorationsCollection"]>;
 type BoardSelection = { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
-type RemoteSelection = { boardId: string; clientId: string; user: User; selection: BoardSelection };
+type RemoteSelection = { boardId: string; clientId: string; user: User; filePath?: string; selection: BoardSelection };
 type BoardLoadError = { message: string; status?: number };
 
 const DEFAULT_SESSION_WIDTH = 305;
@@ -77,6 +78,8 @@ export function BoardPage() {
   const selectionDisposable = useRef<{ dispose: () => void } | null>(null);
   const editorPointerCleanup = useRef<(() => void) | null>(null);
   const activeWorker = useRef<{ worker: Worker; url: string } | null>(null);
+  const reactWorkspaceRef = useRef<ReactBoardWorkspaceHandle | null>(null);
+  const activeFileRef = useRef<string | null>(null);
   const remoteDecorations = useRef(new Map<string, DecorationCollection>());
   const resizeState = useRef<{ startX: number; startWidth: number; width: number } | null>(null);
 
@@ -161,6 +164,7 @@ export function BoardPage() {
     const onSaved = (data: { version: number }) => { setSaved(true); setBoard((b) => b ? { ...b, version: data.version } : b); };
     const onSelection = (data: RemoteSelection) => {
       if (data.boardId !== boardId || data.clientId === socket.id) return;
+      if ((data.filePath ?? null) !== activeFileRef.current) return;
       const editor = editorRef.current;
       const monaco = monacoRef.current;
       const model = editor?.getModel();
@@ -294,6 +298,7 @@ export function BoardPage() {
       selectionTimer.current = window.setTimeout(() => {
         socket.emit("board:selection", {
           boardId,
+          filePath: activeFileRef.current ?? undefined,
           selection: {
             startLineNumber: selection.startLineNumber,
             startColumn: selection.startColumn,
@@ -337,6 +342,10 @@ export function BoardPage() {
   };
 
   const stopRun = useCallback(() => {
+    if (board?.kind === "REACT") {
+      reactWorkspaceRef.current?.stop();
+      return;
+    }
     const active = activeWorker.current;
     if (!active) return;
     activeWorker.current = null;
@@ -344,7 +353,7 @@ export function BoardPage() {
     URL.revokeObjectURL(active.url);
     setOutput((current) => [...current, "■ Выполнение остановлено пользователем"]);
     setRunning(false);
-  }, []);
+  }, [board?.kind]);
 
   useEffect(() => () => {
     const active = activeWorker.current;
@@ -356,6 +365,10 @@ export function BoardPage() {
 
   const run = useCallback(() => {
     if (running) return;
+    if (board?.kind === "REACT") {
+      reactWorkspaceRef.current?.run();
+      return;
+    }
     if (window.matchMedia("(max-width: 760px)").matches) setMobileConsoleOpen(true);
     setRunning(true); setOutput(["▶ Запуск..."]);
     const js = ts.transpile(code, { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, allowJs: true });
@@ -382,7 +395,7 @@ export function BoardPage() {
     };
     worker.onerror = (event) => { event.preventDefault(); finish([...result, `Ошибка: ${event.message}`]); };
     worker.onmessageerror = () => finish([...result, "Ошибка: не удалось прочитать результат выполнения"]);
-  }, [code, running]);
+  }, [board?.kind, code, running]);
 
   useEffect(() => {
     const runWithKeyboard = (event: KeyboardEvent) => {
@@ -446,7 +459,7 @@ export function BoardPage() {
     <header className="board-toolbar">
       <Link to={`/workspace/${workspaceId}`} className="board-toolbar__back"><ArrowLeftOutlined /></Link>
       <div className="board-toolbar__title"><span>{board.workspaceId ? "ЗАДАЧА" : "ДОСКА"} / {board.groupName?.toUpperCase() ?? "БЕЗ ГРУППЫ"}</span><h1>{board.title}</h1></div>
-      <Tag className="language-tag">{board.language === "TYPESCRIPT" ? "TypeScript" : "JavaScript"}</Tag>
+      <Tag className="language-tag">{board.kind === "REACT" ? `React 19 · ${board.language === "TYPESCRIPT" ? "TS" : "JS"}` : board.language === "TYPESCRIPT" ? "TypeScript" : "JavaScript"}</Tag>
       <div className="save-state">{saved ? <><CheckCircleFilled /> сохранено · v{board.version}</> : <><SaveOutlined /> сохраняем...</>}</div>
       <div className="presence"><Avatar.Group max={{ count: 3 }}>{presence.map((person) => <Tooltip title={person.displayName} key={person.id}><Avatar>{person.displayName.slice(0, 1)}</Avatar></Tooltip>)}</Avatar.Group><span><i /> {presence.length || 1} в комнате</span></div>
       <Button className="mobile-console-button" icon={<CodeOutlined />} aria-label="Открыть консоль вывода" onClick={() => setMobileConsoleOpen(true)}><span>Вывод</span></Button>
@@ -469,13 +482,13 @@ export function BoardPage() {
           {normalizedTaskSearch.length >= 2 && !taskSearchLoading && taskSearchError && <div className="board-task-search__state board-task-search__state--error"><WarningOutlined /><b>Поиск недоступен</b><span>{taskSearchError}</span><Button size="small" icon={<ReloadOutlined />} onClick={() => setTaskSearchAttempt((attempt) => attempt + 1)}>Повторить</Button></div>}
           {normalizedTaskSearch.length >= 2 && !taskSearchLoading && !taskSearchError && taskSearchResults.length === 0 && <div className="board-task-search__state"><SearchOutlined /><b>Совпадений нет</b><span>Попробуйте другую строку или более короткий фрагмент кода.</span></div>}
           {!taskSearchLoading && !taskSearchError && taskSearchResults.map((result) => <Link className={`board-task-search__result ${result.id === boardId ? "is-active" : ""}`} to={`/workspace/${workspaceId}/board/${result.id}`} key={result.id} onClick={() => { if (window.innerWidth <= 760) { setTaskSidebarOpen(false); setTaskSearchOpen(false); setTaskSearchQuery(""); } }}>
-            <span className="board-task-search__result-head"><i>{result.language === "TYPESCRIPT" ? "TS" : "JS"}</i><b>{result.title}</b><small>{result.occurrences > 1 ? `${result.occurrences} совп.` : "1 совп."}</small></span>
+            <span className="board-task-search__result-head"><i>{result.kind === "REACT" ? "R19" : result.language === "TYPESCRIPT" ? "TS" : "JS"}</i><b>{result.title}</b><small>{result.occurrences > 1 ? `${result.occurrences} совп.` : "1 совп."}</small></span>
             <em>{searchMatchLabel(result)}</em>
             <code>{result.snippet}</code>
           </Link>)}
         </> : navigationBoards.map((item) => <div className={`board-task-nav__row ${item.id === boardId ? "is-active" : ""}`} key={item.id}>
           <Link className="board-task-nav__item" to={`/workspace/${workspaceId}/board/${item.id}`} title={item.title} aria-label={`Открыть задачу «${item.title}»`} aria-current={item.id === boardId ? "page" : undefined} onClick={() => { if (window.innerWidth <= 760) setTaskSidebarOpen(false); }}>
-            <span className="board-task-nav__language">{item.language === "TYPESCRIPT" ? "TS" : "JS"}</span>
+            <span className="board-task-nav__language">{item.kind === "REACT" ? "R19" : item.language === "TYPESCRIPT" ? "TS" : "JS"}</span>
             <span className="board-task-nav__copy"><b>{item.title}</b><small>{item.groupName ?? "Без группы"}</small></span>
           </Link>
         </div>)}</nav>
@@ -484,7 +497,18 @@ export function BoardPage() {
       <div className={`board-workspace-content ${realtimeStatus === "error" ? "board-workspace-content--realtime-error" : ""}`}>
         {realtimeStatus === "error" && <div className="realtime-error" role="alert"><WarningOutlined /><div><b>Совместное редактирование недоступно</b><span>{realtimeError || "Не удалось подключиться к Socket.IO. Изменения пока не синхронизируются."}</span></div><Button size="small" icon={<ReloadOutlined />} onClick={retryRealtime}>Повторить</Button></div>}
         <section id="board-task-description" className={`board-context ${descriptionOpen ? "" : "board-context--collapsed"}`}><CodeOutlined /><div><span>УСЛОВИЕ</span>{descriptionOpen && <p>{board.description || "Условие не добавлено. Обсудите задачу прямо во время сессии."}</p>}</div><button className="board-context__toggle" type="button" aria-controls="board-task-description" aria-expanded={descriptionOpen} aria-label={descriptionOpen ? "Скрыть условие задачи" : "Показать условие задачи"} title={descriptionOpen ? "Скрыть условие" : "Показать условие"} onClick={() => setDescriptionOpen((open) => !open)}>{descriptionOpen ? <UpOutlined /> : <DownOutlined />}</button></section>
-        <main className="editor-layout" style={{ "--session-pane-width": `${sessionWidth}px` } as CSSProperties}>
+        {board.kind === "REACT" ? <ReactBoardWorkspace
+          ref={reactWorkspaceRef}
+          board={board}
+          workspaceId={workspaceId}
+          content={code}
+          onContentChange={updateCode}
+          onEditorMount={mountEditor}
+          activeFileRef={activeFileRef}
+          output={output}
+          setOutput={setOutput}
+          onRunningChange={setRunning}
+        /> : <main className="editor-layout" style={{ "--session-pane-width": `${sessionWidth}px` } as CSSProperties}>
       <div className="editor-pane">
         <div className="editor-tab"><span>{board.title.toLowerCase().replaceAll(" ", "-")}.{board.language === "TYPESCRIPT" ? "ts" : "js"}</span><small><TeamOutlined /> LIVE</small></div>
         <Editor
@@ -518,7 +542,7 @@ export function BoardPage() {
         <Pomodoro workspaceId={workspaceId} compact />
         <div className="console"><header><span>КОНСОЛЬ</span><button onClick={() => setOutput([])}>очистить</button></header><pre aria-live="polite">{output.map((line, i) => <span key={i}>{line}</span>)}</pre></div>
       </aside>
-        </main>
+        </main>}
       </div>
     </div>
     <Drawer

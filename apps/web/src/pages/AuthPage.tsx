@@ -39,12 +39,11 @@ export function AuthPage() {
         <Segmented block value={mode} onChange={(value) => setMode(value as typeof mode)} options={[{ label: "Войти", value: "login" }, { label: "Создать аккаунт", value: "register" }]} />
         <header><span className="eyebrow">ДОБРО ПОЖАЛОВАТЬ</span><h2>{mode === "login" ? "Продолжим практику" : "Создайте свою доску"}</h2><p>{mode === "login" ? "Ваши решения ждут вас там, где вы остановились." : "Первое рабочее пространство займёт меньше минуты."}</p></header>
         <Form layout="vertical" requiredMark={false} onFinish={submit}>
-          {mode === "register" && <Form.Item label="Как вас называть" name="displayName" rules={[{ required: true, min: 2 }]}><Input size="large" placeholder="Имя или псевдоним" /></Form.Item>}
-          <Form.Item label="Электронная почта" name="email" rules={[{ required: true, type: "email" }]}><Input size="large" placeholder="you@example.com" /></Form.Item>
-          <Form.Item label="Пароль" name="password" rules={[{ required: true, min: 8, message: "Минимум 8 символов" }]}><Input.Password size="large" placeholder="Не короче 8 символов" /></Form.Item>
+          {mode === "register" && <Form.Item label="Как вас называть" name="displayName" rules={[{ required: true, message: "Введите имя или псевдоним" }, { min: 2, message: "Минимум 2 символа" }]}><Input size="large" placeholder="Имя или псевдоним" /></Form.Item>}
+          <Form.Item label="Электронная почта" name="email" validateTrigger="onBlur" rules={[{ required: true, message: "Введите электронную почту" }, { type: "email", message: "Введите корректный адрес электронной почты" }]}><Input size="large" placeholder="you@example.com" /></Form.Item>
+          <Form.Item label="Пароль" name="password" rules={[{ required: true, message: "Введите пароль" }, { min: 8, message: "Минимум 8 символов" }]}><Input.Password size="large" placeholder="Не короче 8 символов" /></Form.Item>
           <Button htmlType="submit" type="primary" size="large" block loading={loading}> {mode === "login" ? "Войти в Pairboard" : "Создать аккаунт"} <ArrowRightOutlined /></Button>
         </Form>
-        <button className="demo-hint" onClick={() => void submit({ email: "student@pairboard.local", password: "pairboard123" })}>Демо-вход: <b>ученик</b> / пароль pairboard123</button>
       </div>
     </section>
   </div>;

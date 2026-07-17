@@ -348,6 +348,88 @@ body.is-resizing-session * {
 
 .mobile-console-button { display: none; }
 
+.react-editor-layout {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 190px minmax(320px, 1fr) var(--react-output-width, 420px);
+  background: #0b0e12;
+}
+
+.react-file-pane {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 38px minmax(0, 1fr) auto;
+  border-right: 1px solid #252d36;
+  background: #0c1014;
+}
+.react-file-pane > header { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 0 12px; border-bottom: 1px solid #252d36; color: #7d8994; }
+.react-file-pane > header span { display: flex; align-items: center; gap: 7px; font: 9px "JetBrains Mono"; letter-spacing: 0.12em; }
+.react-file-pane > header button,
+.react-file-row__actions button { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid transparent; background: transparent; color: #75818c; cursor: pointer; }
+.react-file-pane > header button:hover,
+.react-file-row__actions button:hover:not(:disabled) { border-color: #3b4b3b; color: var(--green); }
+.react-file-row__actions button:disabled { opacity: 0.2; cursor: not-allowed; }
+.react-file-pane > nav { min-height: 0; overflow: auto; padding: 7px; }
+.react-file-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border: 1px solid transparent; }
+.react-file-row:hover { background: #12171c; }
+.react-file-row.is-active { border-color: #304139; background: #151c1a; box-shadow: inset 2px 0 var(--green); }
+.react-file-row__open { min-width: 0; height: 39px; display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 0 6px 0 9px; border: 0; background: transparent; color: #8d98a2; text-align: left; cursor: pointer; }
+.react-file-row__open > svg { color: #65727d; }
+.react-file-row__open > span { overflow: hidden; font: 10px "JetBrains Mono"; text-overflow: ellipsis; white-space: nowrap; }
+.react-file-row__open small { color: var(--green); font: 7px "JetBrains Mono"; letter-spacing: 0.08em; }
+.react-file-row__actions { display: none; padding-right: 3px; }
+.react-file-row:hover .react-file-row__actions,
+.react-file-row:focus-within .react-file-row__actions { display: flex; }
+.react-file-pane > footer { display: flex; flex-direction: column; gap: 3px; padding: 13px 12px; border-top: 1px solid #252d36; background: #0a0e12; }
+.react-file-pane > footer b { color: var(--green); font: 9px "JetBrains Mono"; }
+.react-file-pane > footer span,
+.react-file-pane > footer small { color: #65717c; font: 8px/1.4 "JetBrains Mono"; }
+.react-file-pane > footer small { color: #876f52; }
+
+.react-code-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: 38px minmax(0, 1fr); overflow: hidden; }
+.react-code-pane .editor-tab { border-right: 1px solid #252d36; }
+.react-code-pane .monaco-editor,
+.react-code-pane .monaco-editor .overflow-guard { min-width: 0; max-width: 100%; overflow: hidden; }
+
+.react-output-pane { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: 118px minmax(210px, 1fr) minmax(150px, 34%); border-left: 1px solid #252d36; background: #0e1216; transition: box-shadow 160ms ease; }
+.react-output-resizer { display: block; }
+.react-output-pane .pomodoro.is-compact { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto 1fr; gap: 2px 12px; align-items: center; padding: 14px 16px; }
+.react-output-pane .pomodoro.is-compact .pomodoro__time { margin: 4px 0 0; font-size: 31px; }
+.react-output-pane .pomodoro.is-compact .pomodoro__actions { grid-column: 2; grid-row: 1 / -1; width: auto; flex-direction: column; gap: 5px; }
+.react-output-pane .pomodoro.is-compact .pomodoro__actions .ant-btn { height: 28px; font-size: 9px; }
+.react-preview { min-width: 0; min-height: 0; display: grid; grid-template-rows: 38px minmax(0, 1fr); border-bottom: 1px solid #252d36; background: #e9eee5; }
+.react-preview > header { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid #303841; background: #0f1418; color: #85919b; font: 9px "JetBrains Mono"; letter-spacing: 0.1em; }
+.react-preview > header button { border: 0; background: transparent; color: #74808a; font: 9px "JetBrains Mono"; cursor: pointer; }
+.react-preview > header button:hover { color: var(--green); }
+.react-preview iframe { width: 100%; height: 100%; min-height: 0; border: 0; background: #fff; }
+.react-console { min-height: 0; }
+.react-console pre { min-height: 0; }
+.react-file-dialog__hint { margin: 12px 0 0; color: #7c8792; font: 10px/1.6 "JetBrains Mono"; }
+.react-project-error { min-height: 0; display: grid; place-content: center; gap: 8px; padding: 32px; background: #100e0c; color: #d7c7b8; }
+.react-project-error span { color: #987f67; font: 10px "JetBrains Mono"; }
+
+@media (max-width: 1200px) and (min-width: 761px) {
+  .react-editor-layout { grid-template-columns: 158px minmax(280px, 1fr) var(--react-output-width, 380px); }
+  .react-file-row__open { padding-left: 6px; }
+  .react-output-pane { grid-template-rows: 104px minmax(190px, 1fr) minmax(130px, 30%); }
+}
+
+@media (max-width: 760px) {
+  .react-editor-layout { overflow: auto; grid-template-columns: 112px minmax(360px, 1fr); grid-template-rows: minmax(420px, 62dvh) minmax(420px, 70dvh); }
+  .react-file-pane { grid-column: 1; grid-row: 1; }
+  .react-code-pane { grid-column: 2; grid-row: 1; }
+  .react-output-pane { grid-column: 1 / -1; grid-row: 2; grid-template-rows: minmax(280px, 1fr) 150px; border-top: 1px solid #252d36; border-left: 0; }
+  .react-output-resizer { display: none; }
+  .react-output-pane .pomodoro { display: none !important; }
+  .react-file-pane > footer { padding: 9px 7px; }
+  .react-file-pane > footer span { display: none; }
+  .react-file-row__open { grid-template-columns: 12px minmax(0, 1fr); gap: 4px; padding-inline: 5px; }
+  .react-file-row__open small { display: none; }
+  .react-file-row__actions { position: absolute; right: 0; background: #12171c; }
+}
+
 .mobile-console-drawer .ant-drawer-content {
   background: #0d1115;
   border-top: 1px solid #35414b;
@@ -481,5 +563,71 @@ body.is-resizing-session * {
   .activity-card__header { flex-direction: column; }
   .activity-card__header .ant-select { width: 100%; }
   .activity-detail { grid-template-columns: 1fr; }
+}
+
+.board-grid--list .board-card {
+  grid-template-columns:
+    minmax(220px, 1.1fr)
+    minmax(140px, 0.9fr)
+    minmax(180px, 1.2fr)
+    minmax(150px, 0.8fr);
+}
+
+.board-grid--list .board-card__head {
+  min-width: 0;
+}
+
+.board-grid--list .board-card__head > .ant-tag,
+.board-grid--list .board-card__head > small {
+  flex: 0 0 auto;
+}
+
+.board-grid--list .board-card__head > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-grid--list .board-card__head > small {
+  margin-left: 0;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .board-grid.board-grid--list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1100px) and (min-width: 901px) {
+  .board-grid--list .board-card {
+    grid-template-columns: minmax(0, 1fr) minmax(150px, auto);
+    grid-template-areas:
+      "meta footer"
+      "title footer"
+      "description footer";
+    row-gap: 7px;
+  }
+
+  .board-grid--list .board-card__head { grid-area: meta; }
+  .board-grid--list .board-card h3 { grid-area: title; }
+  .board-grid--list .board-card > p { grid-area: description; }
+  .board-grid--list .board-card footer {
+    grid-area: footer;
+    align-self: center;
+  }
+}
+
+@media (max-width: 900px) {
+  .board-grid--list .board-card {
+    display: flex;
+    align-items: stretch;
+    gap: 9px;
+  }
+
+  .board-grid--list .board-card footer {
+    margin-top: 4px;
+  }
 }
 .invite-create,.invite-result{padding:4px 2px 2px}.invite-create__icon{width:48px;height:48px;display:grid;place-items:center;border:1px solid #35414b;background:#111820;color:var(--green);font-size:20px;margin-bottom:18px}.invite-create h3{font-size:19px;margin:0 0 8px}.invite-create p,.invite-result p{color:#8c97a2;line-height:1.6;margin:0 0 18px}.invite-create ul{list-style:none;margin:0 0 22px;padding:14px 16px;border:1px solid var(--line);background:#0c1014;display:grid;gap:9px}.invite-create li{font:10px "JetBrains Mono";letter-spacing:.04em;color:#a7b0b9}.invite-create li::before{content:"+";color:var(--green);margin-right:9px}.invite-result__status{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:15px}.invite-result__status span{font:9px "JetBrains Mono";letter-spacing:.13em;color:var(--green)}.invite-result__status b{font-size:13px}.invite-result .ant-input-affix-wrapper{background:#0a0e12;border-color:#34414a}.invite-result .ant-input{font-family:"JetBrains Mono";font-size:10px}

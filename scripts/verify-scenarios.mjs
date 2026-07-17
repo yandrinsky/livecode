@@ -154,9 +154,19 @@ try {
     expected: 201,
     body: JSON.stringify({ title: "Integration JavaScript Board", groupName: "Integration", language: "JAVASCRIPT" }),
   });
+  const { board: reactBoard } = await request(`/workspaces/${workspace.id}/boards`, {
+    token: student.token,
+    method: "POST",
+    expected: 201,
+    body: JSON.stringify({ title: "Integration React Board", groupName: "Integration", kind: "REACT", language: "TYPESCRIPT" }),
+  });
+  const reactProject = JSON.parse(reactBoard.content);
   assert(board.content.includes("number[]"), "TS starter не соответствует языку");
   assert(jsBoard.content.includes("solve(input)"), "JS starter не соответствует языку");
-  checked("создание и сохранение TS/JS-досок в группе");
+  assert(reactBoard.kind === "REACT", "React-доска создана с неверным типом");
+  assert(reactProject.runtime === "react@19.1.0", "React runtime не зафиксирован на 19.1.0");
+  assert(reactProject.entry === "/src/main.tsx" && reactProject.files.some((file) => file.path.endsWith(".module.css")), "React starter не содержит entry и CSS Module");
+  checked("создание CODE и многофайловой React 19 доски в группе");
 
   const patched = await request(`/boards/${board.id}`, {
     token: teacher.token,
@@ -266,9 +276,11 @@ try {
   checked("Pomodoro: фокус → перерыв 5 минут → фокус, перерыв не входит в статистику");
 
   await request(`/boards/${jsBoard.id}`, { token: student.token, method: "DELETE", expected: 204 });
+  await request(`/boards/${reactBoard.id}`, { token: student.token, method: "DELETE", expected: 204 });
   const finalWorkspace = await request(`/workspaces/${workspace.id}`, { token: teacher.token });
   assert(finalWorkspace.workspace.boards.some((item) => item.id === board.id), "Основная доска потеряна");
   assert(!finalWorkspace.workspace.boards.some((item) => item.id === jsBoard.id), "Удалённая доска осталась в списке");
+  assert(!finalWorkspace.workspace.boards.some((item) => item.id === reactBoard.id), "Удалённая React-доска осталась в списке");
   assert(finalWorkspace.workspace.pomodoro.remainingSeconds === 300, "Pomodoro не сохранился в БД");
   checked("удаление владельцем и итоговое состояние workspace");
 

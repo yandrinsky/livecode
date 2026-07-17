@@ -15,9 +15,18 @@
     file_server
   }
 
+  @notPreview not path /react-preview.html
+  header @notPreview X-Frame-Options DENY
+
+  header /react-preview.html {
+    Access-Control-Allow-Origin *
+    X-Frame-Options SAMEORIGIN
+  }
+
+  header /assets/* Access-Control-Allow-Origin *
+
   header {
     X-Content-Type-Options nosniff
-    X-Frame-Options DENY
     Referrer-Policy strict-origin-when-cross-origin
     -Server
   }

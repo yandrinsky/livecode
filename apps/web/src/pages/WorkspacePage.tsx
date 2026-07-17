@@ -43,7 +43,7 @@ export function WorkspacePage() {
 
   if (loadError) return <div className="page-load-error"><DataLoadError title="Пространство недоступно" message={loadError} onRetry={() => setLoadAttempt((attempt) => attempt + 1)} /></div>;
   if (!workspace) return <div className="page-loading"><Skeleton active paragraph={{ rows: 8 }} /></div>;
-  const createBoard = async (values: { title: string; description?: string; groupName?: string; language: Board["language"] }) => {
+  const createBoard = async (values: { title: string; description?: string; groupName?: string; kind: Board["kind"]; language: Board["language"] }) => {
     try { await api(`/workspaces/${workspaceId}/boards`, { method: "POST", body: JSON.stringify(values) }); setBoardModal(false); await load(); }
     catch (error) { message.error(error instanceof Error ? error.message : "Не удалось создать задачу"); }
   };
@@ -79,19 +79,20 @@ export function WorkspacePage() {
     <div className="board-filters"><Input allowClear prefix={<SearchOutlined />} placeholder="Найти задачу..." value={query} onChange={(e) => setQuery(e.target.value)} /><Select value={group} onChange={setGroup} options={[{ value: "all", label: "Все группы" }, ...groups.map((g) => ({ value: g, label: g }))]} /><Select value={sort} onChange={setSort} options={[{ value: "updatedAt", label: "Сначала изменённые" }, { value: "createdAt", label: "Сначала новые" }]} /><Segmented value={view} onChange={(v) => setView(v as typeof view)} options={[{ value: "grid", icon: <AppstoreOutlined /> }, { value: "list", icon: <BarsOutlined /> }]} /></div>
     {boards.length === 0 ? <Empty description="Здесь пока нет подходящих задач"><Button type="primary" onClick={() => setBoardModal(true)}>Создать первую</Button></Empty> : <section className={`board-grid board-grid--${view}`}>{boards.map((board) => <div className="board-card-shell" key={board.id}>
       <Link className="board-card" to={`/workspace/${workspace.id}/board/${board.id}`}>
-        <div className="board-card__head"><Tag>{board.language === "TYPESCRIPT" ? "TS" : "JS"}</Tag><span>{board.groupName ?? "Без группы"}</span><small>{dayjs(board.updatedAt).format("D MMM · HH:mm")}</small></div>
+        <div className="board-card__head"><Tag>{board.kind === "REACT" ? `REACT 19 · ${board.language === "TYPESCRIPT" ? "TS" : "JS"}` : board.language === "TYPESCRIPT" ? "TS" : "JS"}</Tag><span>{board.groupName ?? "Без группы"}</span><small>{dayjs(board.updatedAt).format("D MMM · HH:mm")}</small></div>
         <h3>{board.title}</h3><p>{board.description || "Описание можно добавить позже."}</p>
-        <pre>{board.content.split("\n").slice(0, 4).join("\n")}</pre>
+        <pre>{board.kind === "REACT" ? "src/\n  main · entry\n  App · component\n  styles · css" : board.content.split("\n").slice(0, 4).join("\n")}</pre>
         <footer><span>Версия {board.version}</span><b>Открыть доску <ArrowRightOutlined /></b></footer>
       </Link>
       {workspace.ownerId === user?.id && <Dropdown trigger={["click"]} placement="bottomRight" menu={{ items: [{ key: "delete", danger: true, icon: <DeleteOutlined />, label: "Удалить задачу", onClick: () => setBoardToDelete(board) }] }}><Button className="board-card__menu-trigger" type="text" loading={deletingBoardId === board.id} icon={<MoreOutlined />} aria-label={`Меню задачи «${board.title}»`} title="Действия с задачей" /></Dropdown>}
     </div>)}</section>}
     <Modal title={boardToDelete ? `Удалить «${boardToDelete.title}»?` : "Удалить задачу?"} open={Boolean(boardToDelete)} okText="Удалить" cancelText="Отмена" okButtonProps={{ danger: true }} confirmLoading={Boolean(deletingBoardId)} cancelButtonProps={{ disabled: Boolean(deletingBoardId) }} closable={!deletingBoardId} maskClosable={!deletingBoardId} onCancel={() => { if (!deletingBoardId) setBoardToDelete(null); }} onOk={() => { if (boardToDelete) void deleteBoard(boardToDelete); }}><p>Решение будет удалено без возможности восстановления.</p></Modal>
-    <Modal title="Новая задача" open={boardModal} onCancel={() => setBoardModal(false)} footer={null} destroyOnHidden><Form layout="vertical" initialValues={{ language: "TYPESCRIPT" }} onFinish={createBoard}>
+    <Modal title="Новая задача" open={boardModal} onCancel={() => setBoardModal(false)} footer={null} destroyOnHidden><Form layout="vertical" initialValues={{ kind: "CODE", language: "TYPESCRIPT" }} onFinish={createBoard}>
       <Form.Item label="Название" name="title" rules={[{ required: true, min: 2 }]}><Input size="large" autoFocus placeholder="Например, Развернуть связный список" /></Form.Item>
       <Form.Item label="Условие" name="description"><Input.TextArea rows={3} placeholder="Коротко опишите задачу" /></Form.Item>
       <Form.Item label="Группа" name="groupName"><Input placeholder="Массивы, графы, собеседование..." /></Form.Item>
-      <Form.Item label="Язык" name="language"><Radio.Group optionType="button" buttonStyle="solid" options={[{ label: "TypeScript", value: "TYPESCRIPT" }, { label: "JavaScript", value: "JAVASCRIPT" }]} /></Form.Item>
+      <Form.Item label="Формат задачи" name="kind"><Radio.Group optionType="button" buttonStyle="solid" options={[{ label: "Алгоритм", value: "CODE" }, { label: "React 19", value: "REACT" }]} /></Form.Item>
+      <Form.Item label="Язык исходников" name="language"><Radio.Group optionType="button" buttonStyle="solid" options={[{ label: "TypeScript / TSX", value: "TYPESCRIPT" }, { label: "JavaScript / JSX", value: "JAVASCRIPT" }]} /></Form.Item>
       <Button block type="primary" size="large" htmlType="submit">Создать и открыть позже</Button>
     </Form></Modal>
     <Modal title="Одноразовое приглашение" open={inviteModal} onCancel={() => { setInviteModal(false); setInviteLink(""); }} footer={null}>{inviteLink ? <div className="invite-result">

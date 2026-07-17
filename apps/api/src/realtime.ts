@@ -56,15 +56,15 @@ export function attachRealtime(server: HttpServer) {
       io.to(room).emit("presence:update", roomUsers(io, room));
     });
 
-    socket.on("board:selection", ({ boardId, selection }: { boardId: string; selection: BoardSelection }) => {
+    socket.on("board:selection", ({ boardId, filePath, selection }: { boardId: string; filePath?: string; selection: BoardSelection }) => {
       const room = `board:${boardId}`;
-      if (!socket.rooms.has(room) || !validSelection(selection)) return;
-      socket.to(room).emit("board:selection", { boardId, selection, clientId: socket.id, user });
+      if (!socket.rooms.has(room) || !validSelection(selection) || (filePath !== undefined && !validProjectPath(filePath))) return;
+      socket.to(room).emit("board:selection", { boardId, filePath, selection, clientId: socket.id, user });
     });
 
     socket.on("board:change", async ({ boardId, content }: { boardId: string; content: string }) => {
       const board = await boardAccess(boardId, user.id);
-      if (!board || typeof content !== "string" || content.length > 1_000_000) return;
+      if (!board || typeof content !== "string" || content.length > 1_000_000 || (board.kind === "REACT" && !validReactProject(content, board.language))) return;
       const updated = await db.board.update({ where: { id: board.id }, data: { content, version: { increment: 1 } }, select: { version: true, updatedAt: true } });
       socket.to(`board:${boardId}`).emit("board:change", { boardId, content, version: updated.version, updatedAt: updated.updatedAt, user });
       socket.emit("board:saved", updated);
@@ -147,6 +147,29 @@ function validSelection(value: unknown): value is BoardSelection {
   return ["startLineNumber", "startColumn", "endLineNumber", "endColumn"].every((key) =>
     Number.isInteger(selection[key]) && Number(selection[key]) >= 1 && Number(selection[key]) <= 10_000_000
   );
+}
+
+function validProjectPath(value: string) {
+  return value.length >= 2 && value.length <= 180 && value.startsWith("/") && !value.includes("\\") && !value.split("/").some((part) => part === ".." || part === ".");
+}
+
+function validReactProject(content: string, language: "TYPESCRIPT" | "JAVASCRIPT") {
+  try {
+    const project = JSON.parse(content) as { format?: unknown; version?: unknown; runtime?: unknown; entry?: unknown; files?: unknown };
+    if (project.format !== "pairboard-react-project" || project.version !== 1 || project.runtime !== "react@19.1.0" || typeof project.entry !== "string" || !validProjectPath(project.entry) || !Array.isArray(project.files) || project.files.length < 1 || project.files.length > 100) return false;
+    const paths = new Set<string>();
+    for (const item of project.files) {
+      if (!item || typeof item !== "object") return false;
+      const file = item as { path?: unknown; content?: unknown };
+      if (typeof file.path !== "string" || typeof file.content !== "string" || !validProjectPath(file.path) || file.content.length > 300_000 || paths.has(file.path)) return false;
+      const source = language === "TYPESCRIPT" ? /\.(?:ts|tsx)$/ : /\.(?:js|jsx)$/;
+      if (!source.test(file.path) && !file.path.endsWith(".css")) return false;
+      paths.add(file.path);
+    }
+    return paths.has(project.entry);
+  } catch {
+    return false;
+  }
 }
 
 function roomUsers(io: Server, room: string) {
