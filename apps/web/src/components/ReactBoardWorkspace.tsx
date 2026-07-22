@@ -1,7 +1,8 @@
 import { DeleteOutlined, EditOutlined, FileAddOutlined, FileOutlined, FolderOpenOutlined, ReloadOutlined } from "@ant-design/icons";
 import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import { Button, Input, Modal, Tooltip, message } from "antd";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
+import { applyEditorValuePatch } from "../editorSync";
 import { bundleReactProject, formatBuildError, type ReactBundle } from "../reactBundler";
 import { isAllowedReactFile, normalizeProjectPath, parseReactProject, serializeReactProject, starterForPath, type ReactProject } from "../reactProject";
 import type { Board } from "../types";
@@ -19,6 +20,9 @@ type Props = {
   output: string[];
   setOutput: Dispatch<SetStateAction<string[]>>;
   onRunningChange: (running: boolean) => void;
+  mobileToolbar: ReactNode;
+  editorFontSize: number;
+  editorLineHeight: number;
 };
 
 type FileDialog = { mode: "create" | "rename"; path: string } | null;
@@ -66,6 +70,9 @@ export const ReactBoardWorkspace = forwardRef<ReactBoardWorkspaceHandle, Props>(
   output,
   setOutput,
   onRunningChange,
+  mobileToolbar,
+  editorFontSize,
+  editorLineHeight,
 }, ref) {
   const parsed = useMemo(() => {
     try { return { project: parseReactProject(content), error: "" }; }
@@ -73,6 +80,7 @@ export const ReactBoardWorkspace = forwardRef<ReactBoardWorkspaceHandle, Props>(
   }, [content]);
   const project = parsed.project;
   const [activePath, setActivePath] = useState<string>(project?.entry ?? "");
+  const activeFile = project?.files.find((file) => file.path === activePath) ?? project?.files.find((file) => file.path === project.entry) ?? null;
   const [fileDialog, setFileDialog] = useState<FileDialog>(null);
   const [filePathDraft, setFilePathDraft] = useState("");
   const [deletePath, setDeletePath] = useState<string | null>(null);
@@ -82,16 +90,49 @@ export const ReactBoardWorkspace = forwardRef<ReactBoardWorkspaceHandle, Props>(
   const [resizingOutput, setResizingOutput] = useState(false);
   const layoutRef = useRef<HTMLElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
+  const syncingEditor = useRef(false);
+  const activeFileForSync = useRef(activeFile);
+  activeFileForSync.current = activeFile;
   const pendingBundle = useRef<ReactBundle | null>(null);
   const resizeState = useRef<{ startX: number; startWidth: number; width: number } | null>(null);
   const channel = useRef(globalThis.crypto?.randomUUID?.() ?? `preview-${Date.now()}-${Math.random()}`).current;
 
-  const activeFile = project?.files.find((file) => file.path === activePath) ?? project?.files.find((file) => file.path === project.entry) ?? null;
   activeFileRef.current = activeFile?.path ?? null;
 
   useEffect(() => {
     if (project && !project.files.some((file) => file.path === activePath)) setActivePath(project.entry);
   }, [activePath, project]);
+
+  useEffect(() => {
+    if (!activeFile) return;
+    const frame = window.requestAnimationFrame(() => {
+      const file = activeFileForSync.current;
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      const model = editor?.getModel();
+      if (!file || !editor || !monaco || !model) return;
+      const expectedUri = monaco.Uri.parse(`file://${file.path}`).toString();
+      if (model.uri.toString() !== expectedUri) return;
+      syncingEditor.current = true;
+      try { applyEditorValuePatch(editor, monaco, file.content); }
+      finally { syncingEditor.current = false; }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeFile?.path]);
+
+  const mountEditor: OnMount = (editor, monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
+    const file = activeFileForSync.current;
+    if (file) {
+      syncingEditor.current = true;
+      try { applyEditorValuePatch(editor, monaco, file.content); }
+      finally { syncingEditor.current = false; }
+    }
+    onEditorMount(editor, monaco);
+  };
 
   const clampOutputWidth = useCallback((value: number) => {
     const layoutWidth = layoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
@@ -241,16 +282,20 @@ export const ReactBoardWorkspace = forwardRef<ReactBoardWorkspaceHandle, Props>(
       </aside>
       <section className="react-code-pane">
         <div className="editor-tab"><span>{activeFile.path}</span><small>● LIVE</small></div>
+        {mobileToolbar}
         <Editor
           height="100%"
           path={`file://${activeFile.path}`}
           language={languageFor(activeFile.path)}
-          value={activeFile.content}
+          defaultValue={activeFile.content}
           theme="pairboard-dark"
           beforeMount={beforeMount}
-          onMount={onEditorMount}
-          onChange={(value = "") => commitProject({ ...project, files: project.files.map((file) => file.path === activeFile.path ? { ...file, content: value } : file) })}
-          options={{ automaticLayout: true, fontFamily: "'JetBrains Mono', monospace", fontSize: 14, lineHeight: 23, minimap: { enabled: false }, padding: { top: 16 }, smoothScrolling: true, cursorSmoothCaretAnimation: "on", formatOnPaste: true, tabSize: 2, wordWrap: "on" }}
+          onMount={mountEditor}
+          onChange={(value = "") => {
+            if (syncingEditor.current) return;
+            commitProject({ ...project, files: project.files.map((file) => file.path === activeFile.path ? { ...file, content: value } : file) });
+          }}
+          options={{ automaticLayout: true, fontFamily: "'JetBrains Mono', monospace", fontSize: editorFontSize, lineHeight: editorLineHeight, minimap: { enabled: false }, padding: { top: editorFontSize < 12 ? 8 : 16 }, smoothScrolling: editorFontSize >= 12, cursorSmoothCaretAnimation: editorFontSize < 12 ? "off" : "on", formatOnPaste: true, tabSize: 2, wordWrap: "on", scrollBeyondLastLine: false }}
         />
       </section>
       <aside className={`react-output-pane ${resizingOutput ? "session-pane--resizing" : ""}`}>

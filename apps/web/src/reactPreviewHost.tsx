@@ -22,19 +22,45 @@ previewWindow.__PAIRBOARD_JSX_DEV_RUNTIME__ = jsxDevRuntime;
 const channel = new URLSearchParams(location.search).get("channel") ?? "";
 const send = (type: string, value?: string) => parent.postMessage({ source: "pairboard-react-preview", channel, type, value }, "*");
 
-function printable(value: unknown, seen = new WeakSet<object>()): string {
-  if (typeof value === "string") return value;
-  if (typeof value === "function") return `[Function ${value.name || "anonymous"}]`;
+function quoteString(value: string) {
+  return `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'").replaceAll("\n", "\\n").replaceAll("\r", "\\r").replaceAll("\t", "\\t")}'`;
+}
+
+function printable(value: unknown, nested = false, depth = 0, ancestors = new WeakSet<object>()): string {
+  if (typeof value === "string") return nested ? quoteString(value) : value;
+  if (typeof value === "function") return `[Function${value.name ? `: ${value.name}` : ""}]`;
   if (typeof value === "symbol") return value.toString();
   if (typeof value === "bigint") return `${value}n`;
-  if (value instanceof Error) return `${value.name}: ${value.message}`;
-  if (value && typeof value === "object") {
-    if (seen.has(value)) return "[Circular]";
-    seen.add(value);
-    try { return JSON.stringify(value, (_key, nested) => typeof nested === "bigint" ? `${nested}n` : nested, 2); }
-    catch { return Object.prototype.toString.call(value); }
+  if (value === null || typeof value !== "object") return String(value);
+  if (value instanceof Error) return value.stack || `${value.name}: ${value.message}`;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? "Invalid Date" : value.toISOString();
+  if (value instanceof RegExp) return String(value);
+  if (ancestors.has(value)) return "[Circular]";
+  if (depth >= 5) return Array.isArray(value) ? `[Array(${value.length})]` : "[Object]";
+
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const values = value.slice(0, 100).map((item) => printable(item, true, depth + 1, ancestors));
+      if (value.length > 100) values.push(`... ${value.length - 100} more items`);
+      return `[ ${values.join(", ")} ]`;
+    }
+    const keys = Reflect.ownKeys(value).filter((key) => Object.getOwnPropertyDescriptor(value, key)?.enumerable);
+    const properties = keys.slice(0, 100).map((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      const label = typeof key === "symbol" ? `[${String(key)}]` : /^[A-Za-z_$][\w$]*$/.test(key) ? key : quoteString(key);
+      if (!descriptor) return `${label}: undefined`;
+      if (descriptor.get && !("value" in descriptor)) return `${label}: [Getter]`;
+      return `${label}: ${printable(descriptor.value, true, depth + 1, ancestors)}`;
+    });
+    if (keys.length > 100) properties.push(`... ${keys.length - 100} more properties`);
+    const constructorName = value.constructor && value.constructor !== Object ? value.constructor.name : "";
+    return `${constructorName ? `${constructorName} ` : ""}{ ${properties.join(", ")} }`;
+  } catch {
+    return Object.prototype.toString.call(value);
+  } finally {
+    ancestors.delete(value);
   }
-  return String(value);
 }
 
 for (const level of ["log", "info", "warn", "error"] as const) {
