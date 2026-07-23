@@ -89,6 +89,7 @@ body.is-resizing-session * {
 }
 
 .editor-pane {
+  grid-template-rows: 38px minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -348,6 +349,9 @@ body.is-resizing-session * {
 
 .mobile-console-button { display: none; }
 
+.mobile-editor-tools { display: none; }
+.mobile-paste-hint { margin: 12px 0 0; color: #7c8792; font: 10px/1.55 "JetBrains Mono"; }
+
 .react-editor-layout {
   min-width: 0;
   min-height: 0;
@@ -505,7 +509,29 @@ body.is-resizing-session * {
   .mobile-console-button { display: inline-flex; flex: 0 0 auto; margin-left: auto; }
   .run-button { flex: 0 0 auto; margin-left: 0; }
   .run-button--stop { background: #1b1112; }
-  .editor-pane { height: 100%; }
+  .mobile-editor-tools {
+    min-width: 0;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 7px;
+    overflow-x: auto;
+    border-bottom: 1px solid #252d36;
+    background: #0c1014;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .mobile-editor-tools::-webkit-scrollbar { display: none; }
+  .mobile-editor-tools .ant-btn { flex: 0 0 auto; min-width: 38px; min-height: 36px; padding-inline: 8px; color: #9aa6b0; font-size: 11px; touch-action: manipulation; }
+  .mobile-editor-tools .ant-btn:hover,
+  .mobile-editor-tools .ant-btn:focus-visible { color: var(--green); background: #151b20; }
+  .mobile-editor-tools .ant-btn:disabled { color: #48525c; }
+  .mobile-editor-tools__spacer { flex: 1 1 10px; min-width: 4px; }
+  .mobile-editor-tools__label { flex: 0 0 auto; color: #5f6b75; font: 8px "JetBrains Mono"; letter-spacing: 0.1em; }
+  .mobile-editor-tools output { flex: 0 0 38px; color: var(--green); font: 9px "JetBrains Mono"; text-align: center; }
+  .editor-pane { height: 100%; grid-template-rows: 38px auto minmax(0, 1fr); }
+  .react-code-pane { grid-template-rows: 38px auto minmax(0, 1fr); }
   .board-context { padding-inline: 14px; }
   .realtime-error { grid-template-columns: auto minmax(0, 1fr); padding: 9px 12px; }
   .realtime-error .ant-btn { grid-column: 2; justify-self: start; }
@@ -527,6 +553,7 @@ body.is-resizing-session * {
 @media (max-width: 420px) {
   .mobile-console-button > span:last-child { display: none; }
   .mobile-console-button { width: 36px; padding-inline: 0; }
+  .mobile-editor-tools__label { display: none; }
   .board-toolbar__back { flex: 0 0 34px; width: 34px; }
   .board-toolbar__title h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }

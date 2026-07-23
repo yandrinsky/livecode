@@ -1,6 +1,6 @@
-import { AppstoreOutlined, ArrowLeftOutlined, CheckCircleFilled, CodeOutlined, DownOutlined, HomeOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlayCircleFilled, ReloadOutlined, SaveOutlined, SearchOutlined, StopOutlined, TeamOutlined, UpOutlined, WarningOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, ArrowLeftOutlined, CheckCircleFilled, CodeOutlined, CopyOutlined, DownOutlined, HomeOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MinusOutlined, PlayCircleFilled, PlusOutlined, ReloadOutlined, SaveOutlined, SearchOutlined, SnippetsOutlined, StopOutlined, TeamOutlined, UpOutlined, WarningOutlined } from "@ant-design/icons";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { Avatar, Button, Drawer, Input, Skeleton, Spin, Tag, Tooltip } from "antd";
+import { Avatar, Button, Drawer, Input, Modal, Skeleton, Spin, Tag, Tooltip, message } from "antd";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import ts from "typescript";
@@ -8,6 +8,8 @@ import { ApiError, api } from "../api";
 import { createCodeWorkerSource } from "../codeRunner";
 import { Pomodoro } from "../components/Pomodoro";
 import { ReactBoardWorkspace, type ReactBoardWorkspaceHandle } from "../components/ReactBoardWorkspace";
+import { applyEditorValuePatch } from "../editorSync";
+import { parseReactProject } from "../reactProject";
 import { useLiveSocket } from "../socket";
 import type { Board, BoardSearchResult, User, Workspace } from "../types";
 
@@ -23,6 +25,10 @@ const MIN_SESSION_WIDTH = 260;
 const MAX_SESSION_WIDTH = 720;
 const SESSION_WIDTH_KEY = "pairboard_session_width";
 const TASK_SIDEBAR_KEY = "pairboard_task_sidebar_open";
+const MOBILE_EDITOR_ZOOM_KEY = "pairboard_mobile_editor_zoom";
+const MIN_MOBILE_EDITOR_ZOOM = 50;
+const MAX_MOBILE_EDITOR_ZOOM = 140;
+const DEFAULT_MOBILE_EDITOR_ZOOM = 50;
 
 function storedSessionWidth() {
   if (typeof window === "undefined") return DEFAULT_SESSION_WIDTH;
@@ -34,6 +40,22 @@ function storedTaskSidebarOpen() {
   if (typeof window === "undefined") return true;
   if (window.innerWidth <= 760) return false;
   return localStorage.getItem(TASK_SIDEBAR_KEY) !== "false";
+}
+
+function storedMobileEditorZoom() {
+  if (typeof window === "undefined") return DEFAULT_MOBILE_EDITOR_ZOOM;
+  const value = Number(localStorage.getItem(MOBILE_EDITOR_ZOOM_KEY));
+  return Number.isFinite(value) ? Math.min(MAX_MOBILE_EDITOR_ZOOM, Math.max(MIN_MOBILE_EDITOR_ZOOM, value)) : DEFAULT_MOBILE_EDITOR_ZOOM;
+}
+
+function editorValueForRemoteChange(kind: Board["kind"], content: string, activeFilePath: string | null) {
+  if (kind !== "REACT") return content;
+  if (!activeFilePath) return null;
+  try {
+    return parseReactProject(content).files.find((file) => file.path === activeFilePath)?.content ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function colorIndex(id: string) {
@@ -60,6 +82,10 @@ export function BoardPage() {
   const [output, setOutput] = useState<string[]>(["Готово к запуску. Добавьте console.log, чтобы увидеть результат."]);
   const [running, setRunning] = useState(false);
   const [mobileConsoleOpen, setMobileConsoleOpen] = useState(false);
+  const [mobileViewport, setMobileViewport] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches);
+  const [mobileEditorZoom, setMobileEditorZoom] = useState(storedMobileEditorZoom);
+  const [pasteFallbackOpen, setPasteFallbackOpen] = useState(false);
+  const [pasteDraft, setPasteDraft] = useState("");
   const [descriptionOpen, setDescriptionOpen] = useState(true);
   const [taskSidebarOpen, setTaskSidebarOpen] = useState(storedTaskSidebarOpen);
   const [taskSearchOpen, setTaskSearchOpen] = useState(false);
@@ -70,7 +96,11 @@ export function BoardPage() {
   const [taskSearchAttempt, setTaskSearchAttempt] = useState(0);
   const [sessionWidth, setSessionWidth] = useState(storedSessionWidth);
   const [resizingSession, setResizingSession] = useState(false);
-  const remote = useRef(false);
+  const applyingRemoteChange = useRef(false);
+  const latestCode = useRef(code);
+  const latestBoardKind = useRef<Board["kind"] | null>(board?.kind ?? null);
+  latestCode.current = code;
+  latestBoardKind.current = board?.kind ?? null;
   const saveTimer = useRef<number | undefined>(undefined);
   const selectionTimer = useRef<number | undefined>(undefined);
   const editorRef = useRef<EditorInstance | null>(null);
@@ -111,6 +141,14 @@ export function BoardPage() {
   }, [workspaceId, boardId, loadAttempt]);
 
   useEffect(() => { setWorkspaceBoards([]); }, [workspaceId]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 760px)");
+    const updateViewport = () => setMobileViewport(media.matches);
+    updateViewport();
+    media.addEventListener("change", updateViewport);
+    return () => media.removeEventListener("change", updateViewport);
+  }, []);
 
   useEffect(() => {
     const query = taskSearchQuery.trim();
@@ -159,7 +197,17 @@ export function BoardPage() {
     if (board?.id !== boardId) return;
     const onChange = (data: { boardId: string; content: string; version: number }) => {
       if (data.boardId !== boardId) return;
-      remote.current = true; setCode(data.content); setSaved(true); setBoard((b) => b ? { ...b, version: data.version } : b);
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      const nextEditorValue = editorValueForRemoteChange(board.kind, data.content, activeFileRef.current);
+      if (editor && monaco && nextEditorValue !== null) {
+        applyingRemoteChange.current = true;
+        try { applyEditorValuePatch(editor, monaco, nextEditorValue); }
+        finally { applyingRemoteChange.current = false; }
+      }
+      setCode(data.content);
+      setSaved(true);
+      setBoard((current) => current ? { ...current, version: data.version } : current);
     };
     const onSaved = (data: { version: number }) => { setSaved(true); setBoard((b) => b ? { ...b, version: data.version } : b); };
     const onSelection = (data: RemoteSelection) => {
@@ -219,7 +267,7 @@ export function BoardPage() {
       for (const collection of remoteDecorations.current.values()) collection.clear();
       remoteDecorations.current.clear();
     };
-  }, [socket, workspaceId, boardId, board?.id]);
+  }, [socket, workspaceId, boardId, board?.id, board?.kind]);
 
   useEffect(() => {
     const ignoreBrowserSave = (event: KeyboardEvent) => {
@@ -273,8 +321,8 @@ export function BoardPage() {
   }, [sessionWidth]);
 
   const updateCode = (value = "") => {
+    if (applyingRemoteChange.current) return;
     setCode(value);
-    if (remote.current) { remote.current = false; return; }
     setSaved(false); window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => socket.emit("board:change", { boardId, content: value }), 500);
   };
@@ -282,18 +330,25 @@ export function BoardPage() {
   const mountEditor: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    if (latestBoardKind.current === "CODE") {
+      applyingRemoteChange.current = true;
+      try { applyEditorValuePatch(editor, monaco, latestCode.current); }
+      finally { applyingRemoteChange.current = false; }
+    }
     monaco.editor.setTheme("pairboard-dark");
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => undefined);
     editorPointerCleanup.current?.();
     const editorNode = editor.getDomNode();
-    const focusFromTouch = () => {
+    const focusFromPointer = (event: PointerEvent) => {
+      if (event.pointerType === "touch") return;
       editor.layout();
       editor.focus();
     };
-    editorNode?.addEventListener("pointerdown", focusFromTouch, true);
-    editorPointerCleanup.current = () => editorNode?.removeEventListener("pointerdown", focusFromTouch, true);
+    editorNode?.addEventListener("pointerdown", focusFromPointer, true);
+    editorPointerCleanup.current = () => editorNode?.removeEventListener("pointerdown", focusFromPointer, true);
     selectionDisposable.current?.dispose();
     selectionDisposable.current = editor.onDidChangeCursorSelection(({ selection }) => {
+      if (applyingRemoteChange.current) return;
       window.clearTimeout(selectionTimer.current);
       selectionTimer.current = window.setTimeout(() => {
         socket.emit("board:selection", {
@@ -307,6 +362,82 @@ export function BoardPage() {
           },
         });
       }, 50);
+    });
+  };
+
+  const insertIntoEditor = useCallback((text: string) => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor?.getModel();
+    if (!editor || !monaco || !model) {
+      message.error("Редактор ещё не готов");
+      return false;
+    }
+    const selection = editor.getSelection() ?? new monaco.Selection(1, 1, 1, 1);
+    const insertionOffset = model.getOffsetAt(selection.getStartPosition());
+    editor.pushUndoStop();
+    const changed = editor.executeEdits("pairboard.mobile-paste", [{ range: selection, text, forceMoveMarkers: true }]);
+    editor.pushUndoStop();
+    if (!changed) return false;
+    const end = model.getPositionAt(insertionOffset + text.length);
+    editor.setPosition(end);
+    editor.revealPositionInCenterIfOutsideViewport(end);
+    return true;
+  }, []);
+
+  const copyFromEditor = useCallback(async () => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model) { message.error("Редактор ещё не готов"); return; }
+    const selection = editor.getSelection();
+    const text = selection && !selection.isEmpty() ? model.getValueInRange(selection) : model.getValue();
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const fallback = document.createElement("textarea");
+        fallback.value = text;
+        fallback.readOnly = true;
+        fallback.style.position = "fixed";
+        fallback.style.opacity = "0";
+        document.body.append(fallback);
+        fallback.select();
+        fallback.setSelectionRange(0, fallback.value.length);
+        const copied = document.execCommand("copy");
+        fallback.remove();
+        if (!copied) throw new Error("copy failed");
+      }
+      message.success(selection && !selection.isEmpty() ? "Выделенный код скопирован" : "Код файла скопирован");
+    } catch {
+      message.error("Браузер не разрешил скопировать код");
+    }
+  }, []);
+
+  const pasteIntoEditor = useCallback(async () => {
+    try {
+      if (!navigator.clipboard?.readText) throw new Error("clipboard unavailable");
+      const text = await navigator.clipboard.readText();
+      if (!text) { message.info("Буфер обмена пуст"); return; }
+      if (insertIntoEditor(text)) message.success("Код вставлен");
+    } catch {
+      setPasteDraft("");
+      setPasteFallbackOpen(true);
+    }
+  }, [insertIntoEditor]);
+
+  const applyPasteDraft = () => {
+    if (!pasteDraft) { message.info("Сначала вставьте код в поле"); return; }
+    if (!insertIntoEditor(pasteDraft)) return;
+    setPasteFallbackOpen(false);
+    setPasteDraft("");
+    message.success("Код вставлен");
+  };
+
+  const changeMobileEditorZoom = (delta: number) => {
+    setMobileEditorZoom((current) => {
+      const next = Math.min(MAX_MOBILE_EDITOR_ZOOM, Math.max(MIN_MOBILE_EDITOR_ZOOM, current + delta));
+      localStorage.setItem(MOBILE_EDITOR_ZOOM_KEY, String(next));
+      return next;
     });
   };
 
@@ -455,6 +586,19 @@ export function BoardPage() {
   if (!board || board.id !== boardId) return <div className="board-loading"><Skeleton active paragraph={{ rows: 12 }} /></div>;
   const navigationBoards = workspaceBoards.length ? workspaceBoards : [board];
   const normalizedTaskSearch = taskSearchQuery.trim();
+  const plainEditorFontSize = mobileViewport ? Math.max(8, Math.round(15 * mobileEditorZoom / 100)) : 15;
+  const reactEditorFontSize = mobileViewport ? Math.max(8, Math.round(14 * mobileEditorZoom / 100)) : 14;
+  const editorLineHeight = mobileViewport ? Math.max(13, Math.round(plainEditorFontSize * 1.55)) : 24;
+  const reactEditorLineHeight = mobileViewport ? Math.max(13, Math.round(reactEditorFontSize * 1.55)) : 23;
+  const mobileEditorToolbar = <div className="mobile-editor-tools" role="toolbar" aria-label="Инструменты мобильного редактора">
+    <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => void copyFromEditor()}>Копировать</Button>
+    <Button type="text" size="small" icon={<SnippetsOutlined />} onClick={() => void pasteIntoEditor()}>Вставить</Button>
+    <span className="mobile-editor-tools__spacer" />
+    <span className="mobile-editor-tools__label">МАСШТАБ</span>
+    <Button type="text" size="small" icon={<MinusOutlined />} disabled={mobileEditorZoom <= MIN_MOBILE_EDITOR_ZOOM} aria-label="Уменьшить код" onClick={() => changeMobileEditorZoom(-10)} />
+    <output aria-live="polite">{mobileEditorZoom}%</output>
+    <Button type="text" size="small" icon={<PlusOutlined />} disabled={mobileEditorZoom >= MAX_MOBILE_EDITOR_ZOOM} aria-label="Увеличить код" onClick={() => changeMobileEditorZoom(10)} />
+  </div>;
   return <div className="board-room">
     <header className="board-toolbar">
       <Link to={`/workspace/${workspaceId}`} className="board-toolbar__back"><ArrowLeftOutlined /></Link>
@@ -508,18 +652,23 @@ export function BoardPage() {
           output={output}
           setOutput={setOutput}
           onRunningChange={setRunning}
+          mobileToolbar={mobileEditorToolbar}
+          editorFontSize={reactEditorFontSize}
+          editorLineHeight={reactEditorLineHeight}
         /> : <main className="editor-layout" style={{ "--session-pane-width": `${sessionWidth}px` } as CSSProperties}>
       <div className="editor-pane">
         <div className="editor-tab"><span>{board.title.toLowerCase().replaceAll(" ", "-")}.{board.language === "TYPESCRIPT" ? "ts" : "js"}</span><small><TeamOutlined /> LIVE</small></div>
+        {mobileEditorToolbar}
         <Editor
+          key={board.id}
           height="100%"
           language={board.language === "TYPESCRIPT" ? "typescript" : "javascript"}
-          value={code}
+          defaultValue={code}
           theme="vs-dark"
           onChange={updateCode}
           beforeMount={(monaco) => monaco.editor.defineTheme("pairboard-dark", { base: "vs-dark", inherit: true, rules: [], colors: { "editor.background": "#0b0e12", "editor.lineHighlightBackground": "#11161c", "editorCursor.foreground": "#9bff65", "editor.selectionBackground": "#2d4a3f88", "editorLineNumber.foreground": "#3d4652", "editorLineNumber.activeForeground": "#8d99a8" } })}
           onMount={mountEditor}
-          options={{ automaticLayout: true, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, lineHeight: 24, minimap: { enabled: false }, padding: { top: 18 }, smoothScrolling: true, cursorSmoothCaretAnimation: "on", formatOnPaste: true, tabSize: 2, wordWrap: "on" }}
+          options={{ automaticLayout: true, fontFamily: "'JetBrains Mono', monospace", fontSize: plainEditorFontSize, lineHeight: editorLineHeight, minimap: { enabled: false }, padding: { top: mobileViewport ? 8 : 18 }, smoothScrolling: !mobileViewport, cursorSmoothCaretAnimation: mobileViewport ? "off" : "on", formatOnPaste: true, tabSize: 2, wordWrap: "on", scrollBeyondLastLine: false }}
         />
       </div>
       <aside className={`session-pane ${resizingSession ? "session-pane--resizing" : ""}`}>
@@ -556,5 +705,22 @@ export function BoardPage() {
     >
       <div className="mobile-console-output"><pre aria-live="polite">{output.map((line, i) => <span key={i}>{line}</span>)}</pre></div>
     </Drawer>
+    <Modal
+      title="Вставить код"
+      open={pasteFallbackOpen}
+      okText="Вставить в редактор"
+      cancelText="Отмена"
+      onOk={applyPasteDraft}
+      onCancel={() => { setPasteFallbackOpen(false); setPasteDraft(""); }}
+    >
+      <Input.TextArea
+        autoFocus
+        autoSize={{ minRows: 7, maxRows: 14 }}
+        value={pasteDraft}
+        onChange={(event) => setPasteDraft(event.target.value)}
+        placeholder="Зажмите это поле и выберите «Вставить»"
+      />
+      <p className="mobile-paste-hint">Браузер запретил прямое чтение буфера. В обычном поле системная вставка продолжит работать.</p>
+    </Modal>
   </div>;
 }

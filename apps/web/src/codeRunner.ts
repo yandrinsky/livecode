@@ -11,14 +11,53 @@ let sourceFinished = false;
 let finished = false;
 let idleTimer = null;
 
-const formatValue = (value) => {
-  if (typeof value === "string") return value;
-  if (value instanceof Error) return value.stack || value.message;
+const quoteString = (value) => "'" + value
+  .replaceAll("\\\\", "\\\\\\\\")
+  .replaceAll("'", "\\\\'")
+  .replaceAll("\\n", "\\\\n")
+  .replaceAll("\\r", "\\\\r")
+  .replaceAll("\\t", "\\\\t") + "'";
+
+const formatValue = (value, nested = false, depth = 0, ancestors = new WeakSet()) => {
+  if (typeof value === "string") return nested ? quoteString(value) : value;
+  if (typeof value === "function") return "[Function" + (value.name ? ": " + value.name : "") + "]";
+  if (typeof value === "symbol") return String(value);
+  if (typeof value === "bigint") return String(value) + "n";
+  if (value === null || typeof value !== "object") return String(value);
+  if (value instanceof Error) return value.stack || value.name + ": " + value.message;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? "Invalid Date" : value.toISOString();
+  if (value instanceof RegExp) return String(value);
+  if (ancestors.has(value)) return "[Circular]";
+  if (depth >= 5) return Array.isArray(value) ? "[Array(" + value.length + ")]" : "[Object]";
+
+  ancestors.add(value);
   try {
-    const serialized = JSON.stringify(value);
-    return serialized === undefined ? String(value) : serialized;
+    if (Array.isArray(value)) {
+      const items = value.slice(0, 100).map((item) => formatValue(item, true, depth + 1, ancestors));
+      if (value.length > 100) items.push("... " + (value.length - 100) + " more items");
+      return "[ " + items.join(", ") + " ]";
+    }
+
+    const keys = Reflect.ownKeys(value).filter((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return descriptor && descriptor.enumerable;
+    });
+    const properties = keys.slice(0, 100).map((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      const label = typeof key === "symbol"
+        ? "[" + String(key) + "]"
+        : /^[A-Za-z_$][\\w$]*$/.test(key) ? key : quoteString(key);
+      if (!descriptor) return label + ": undefined";
+      if (descriptor.get && !Object.prototype.hasOwnProperty.call(descriptor, "value")) return label + ": [Getter]";
+      return label + ": " + formatValue(descriptor.value, true, depth + 1, ancestors);
+    });
+    if (keys.length > 100) properties.push("... " + (keys.length - 100) + " more properties");
+    const constructorName = value.constructor && value.constructor !== Object ? value.constructor.name : "";
+    return (constructorName ? constructorName + " " : "") + "{ " + properties.join(", ") + " }";
   } catch {
-    return String(value);
+    return Object.prototype.toString.call(value);
+  } finally {
+    ancestors.delete(value);
   }
 };
 
